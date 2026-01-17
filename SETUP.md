@@ -2,10 +2,12 @@
 
 ## 前提条件
 
+- Python 3.10以上
 - Google アカウント
 - Instagram Business または Creator アカウント（Facebookページと連携済み）
 - X（Twitter）アカウント
 - Cloudflare アカウント
+- GitHub アカウント
 
 ---
 
@@ -33,18 +35,17 @@
 
 1. [Graph API Explorer](https://developers.facebook.com/tools/explorer/) にアクセス
 2. 右上のアプリを作成したアプリに切り替え
-3. 「ユーザーまたはページ」→ 自分のFacebookアカウントを選択
-4. 「許可を追加」で以下を追加:
+3. 「許可を追加」で以下を追加:
    - `instagram_basic`
    - `instagram_content_publish`
    - `pages_show_list`
    - `pages_read_engagement`
-5. 「Generate Access Token」をクリック
-6. 生成されたトークンを控える（短期トークン）
+4. 「Generate Access Token」をクリック
+5. 生成されたトークンを控える（短期トークン）
 
 #### 長期トークンへの変換
 
-ブラウザで以下のURLにアクセス（値を置換）:
+ブラウザで以下のURLにアクセス:
 
 ```
 https://graph.facebook.com/v18.0/oauth/access_token?grant_type=fb_exchange_token&client_id={APP_ID}&client_secret={APP_SECRET}&fb_exchange_token={短期トークン}
@@ -52,29 +53,14 @@ https://graph.facebook.com/v18.0/oauth/access_token?grant_type=fb_exchange_token
 
 レスポンスの `access_token` が60日有効の長期トークンです。
 
-#### Instagram Business Account ID の確認
-
-```
-https://graph.facebook.com/v18.0/me/accounts?access_token={長期トークン}
-```
-
-返ってきたページIDを使って:
-
-```
-https://graph.facebook.com/v18.0/{ページID}?fields=instagram_business_account&access_token={長期トークン}
-```
-
-`instagram_business_account.id` が **Instagram Business Account ID** です。
-
 ---
 
 ### 1.2 X (Twitter) API
 
 1. [X Developer Portal](https://developer.twitter.com/) にアクセス
-2. サインアップ / サインイン
-3. 「Projects & Apps」→「+ New Project」
-4. プロジェクト名・用途を入力
-5. 「App」を作成
+2. 「Projects & Apps」→「+ New Project」
+3. プロジェクト名・用途を入力
+4. 「App」を作成
 
 #### 認証情報の取得
 
@@ -82,163 +68,205 @@ https://graph.facebook.com/v18.0/{ページID}?fields=instagram_business_account
 2. 以下を控える:
    - **API Key** (Consumer Key)
    - **API Key Secret** (Consumer Secret)
-3. 「Access Token and Secret」セクション → 「Generate」
+3. 「Access Token and Secret」→ 「Generate」
 4. 以下を控える:
    - **Access Token**
    - **Access Token Secret**
 
 #### 権限設定
 
-1. App → 「Settings」タブ
-2. 「User authentication settings」→ 「Set up」
-3. App permissions: **Read and write** を選択
-4. 保存
+- App → 「Settings」→ 「User authentication settings」→ **Read and write**
 
 ---
 
 ### 1.3 Cloudflare R2
 
 1. [Cloudflare Dashboard](https://dash.cloudflare.com/) にアクセス
-2. 左メニュー → 「R2」
-3. 「Create bucket」→ バケット名（例: `instagram-temp`）を入力
+2. 左メニュー → 「R2」→「Create bucket」
+3. バケット名（例: `instagram-temp`）を入力
 
 #### API Token の作成
 
-1. R2 → 「Manage R2 API Tokens」
-2. 「Create API token」
-3. 権限: **Admin Read & Write** を選択
-4. 以下を控える:
+1. R2 → 「Manage R2 API Tokens」→「Create API token」
+2. 権限: **Admin Read & Write**
+3. 以下を控える:
    - **Access Key ID**
    - **Secret Access Key**
-
-#### Account ID の確認
-
-1. ダッシュボード右側の「Account ID」をコピー
+   - **Account ID**（ダッシュボード右側）
 
 ---
 
-## Step 2: Google Apps Script のセットアップ
+### 1.4 Google Cloud / サービスアカウント
 
-### 2.1 スプレッドシートの作成
+1. [Google Cloud Console](https://console.cloud.google.com/) にアクセス
+2. 新しいプロジェクトを作成
+3. 「APIとサービス」→「ライブラリ」
+4. 以下のAPIを有効化:
+   - Google Drive API
+   - Google Sheets API
 
-1. [Google Sheets](https://sheets.google.com/) で新規スプレッドシートを作成
-2. 名前を「Instagram自動投稿管理」などに設定
+#### サービスアカウントの作成
 
-### 2.2 Apps Script プロジェクトの作成
+1. 「APIとサービス」→「認証情報」
+2. 「認証情報を作成」→「サービスアカウント」
+3. 名前を入力して作成
+4. 作成したサービスアカウントをクリック
+5. 「キー」タブ →「鍵を追加」→「新しい鍵を作成」→ JSON
+6. ダウンロードされた `credentials.json` を保存
 
-1. スプレッドシートで「拡張機能」→「Apps Script」
-2. 新しいエディタが開く
+#### スプレッドシートへの共有
 
-### 2.3 スクリプトのコピー
+1. Google Sheets で新規スプレッドシートを作成
+2. スプレッドシートIDを控える（URLの `/d/` と `/edit` の間の文字列）
+3. サービスアカウントのメールアドレス（`xxx@xxx.iam.gserviceaccount.com`）に編集権限を付与
 
-`gas/src/` フォルダ内の各ファイルの内容をコピー:
+#### Google Drive フォルダの共有
 
-1. エディタ左側の「+」→「スクリプト」で新規ファイル作成
-2. 以下のファイルを作成してコードをコピー:
-   - `Config.gs`
-   - `Utils.gs`
-   - `Grouping.gs`
-   - `Spreadsheet.gs`
-   - `R2Storage.gs`
-   - `Instagram.gs`
-   - `Twitter.gs`
-   - `Main.gs`
-
-3. `appsscript.json` の設定:
-   - エディタ左側「プロジェクトの設定」（歯車アイコン）
-   - 「appsscript.json」マニフェストを表示」にチェック
-   - `appsscript.json` を開いて内容を置き換え
-
-### 2.4 初期セットアップの実行
-
-1. スプレッドシートを更新（F5）
-2. メニューに「自動投稿システム」が追加される
-3. 「自動投稿システム」→「初期セットアップ」を実行
-4. 認可を求められたら許可
+1. 「Instagram投稿用」フォルダを作成
+2. フォルダIDを控える（URLの `/folders/` の後ろの文字列）
+3. サービスアカウントのメールアドレスに閲覧権限を付与
 
 ---
 
-## Step 3: 認証情報の設定
+## Step 2: ローカル環境のセットアップ
 
-「設定」シートに以下の値を入力:
+### 2.1 リポジトリのクローン
 
-| 設定項目 | 値 |
+```bash
+git clone https://github.com/kwsksj/auto-post.git
+cd auto-post
+```
+
+### 2.2 Python 環境の構築
+
+```bash
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+pip install -e ".[dev]"
+```
+
+### 2.3 環境変数の設定
+
+```bash
+cp .env.example .env
+```
+
+`.env` ファイルを編集して認証情報を入力:
+
+```
+INSTAGRAM_APP_ID=your_app_id
+INSTAGRAM_APP_SECRET=your_app_secret
+INSTAGRAM_ACCESS_TOKEN=your_long_lived_access_token
+...
+```
+
+### 2.4 credentials.json の配置
+
+ダウンロードした `credentials.json` をプロジェクトルートに配置。
+
+---
+
+## Step 3: 初期設定
+
+### 3.1 スプレッドシートの初期化
+
+```bash
+auto-post setup
+```
+
+### 3.2 フォルダのスキャン
+
+Google Drive に画像フォルダを配置した後:
+
+```bash
+auto-post scan
+```
+
+### 3.3 フォルダ一覧の確認
+
+```bash
+auto-post list-folders
+```
+
+---
+
+## Step 4: テスト投稿
+
+### 4.1 特定フォルダをテスト投稿
+
+```bash
+# Instagram のみ
+auto-post test-post FOLDER_ID --platform instagram
+
+# X のみ
+auto-post test-post FOLDER_ID --platform x
+
+# 両方
+auto-post test-post FOLDER_ID --platform both
+```
+
+---
+
+## Step 5: GitHub Actions の設定
+
+### 5.1 リポジトリのSecrets設定
+
+GitHub リポジトリ → Settings → Secrets and variables → Actions
+
+以下のSecretsを追加:
+
+| Secret名 | 値 |
 |---------|---|
-| INSTAGRAM_APP_ID | Facebook App ID |
-| INSTAGRAM_APP_SECRET | Facebook App Secret |
-| INSTAGRAM_ACCESS_TOKEN | 長期アクセストークン |
-| INSTAGRAM_BUSINESS_ACCOUNT_ID | 17841422021372550（既定値） |
-| INSTAGRAM_TOKEN_EXPIRY | トークン有効期限（例: 2025-03-17） |
-| X_API_KEY | X API Key |
-| X_API_KEY_SECRET | X API Key Secret |
-| X_ACCESS_TOKEN | X Access Token |
-| X_ACCESS_TOKEN_SECRET | X Access Token Secret |
-| R2_ACCOUNT_ID | Cloudflare Account ID |
-| R2_ACCESS_KEY_ID | R2 Access Key ID |
-| R2_SECRET_ACCESS_KEY | R2 Secret Access Key |
-| R2_BUCKET_NAME | バケット名（例: instagram-temp） |
-| NOTIFICATION_EMAIL | 通知先メールアドレス |
-| POST_TIME | 投稿時刻（例: 12:00） |
+| `INSTAGRAM_APP_ID` | Facebook App ID |
+| `INSTAGRAM_APP_SECRET` | Facebook App Secret |
+| `INSTAGRAM_ACCESS_TOKEN` | 長期アクセストークン |
+| `INSTAGRAM_BUSINESS_ACCOUNT_ID` | Instagram Business Account ID |
+| `X_API_KEY` | X API Key |
+| `X_API_KEY_SECRET` | X API Key Secret |
+| `X_ACCESS_TOKEN` | X Access Token |
+| `X_ACCESS_TOKEN_SECRET` | X Access Token Secret |
+| `R2_ACCOUNT_ID` | Cloudflare Account ID |
+| `R2_ACCESS_KEY_ID` | R2 Access Key ID |
+| `R2_SECRET_ACCESS_KEY` | R2 Secret Access Key |
+| `R2_BUCKET_NAME` | バケット名 |
+| `GOOGLE_CREDENTIALS_JSON` | credentials.json の内容（JSON文字列） |
+| `GOOGLE_SPREADSHEET_ID` | スプレッドシートID |
+| `GOOGLE_DRIVE_FOLDER_ID` | DriveフォルダID |
+
+### 5.2 ワークフローの確認
+
+- **Daily Post**: 毎日 12:00 JST に自動実行
+- **Scan Folders**: 手動実行（Actions → Scan Folders → Run workflow）
 
 ---
 
-## Step 4: 写真のエクスポートとグルーピング
+## CLI コマンド一覧
 
-### 4.1 Google Takeout でエクスポート
+```bash
+# スプレッドシート初期化
+auto-post setup
 
-1. [Google Takeout](https://takeout.google.com/) にアクセス
-2. 「選択をすべて解除」
-3. 「Google フォト」のみチェック
-4. 「すべてのフォトアルバムが含まれます」→ 対象アルバムを選択
-5. エクスポート形式: ZIP
-6. ダウンロード・展開
+# フォルダスキャン
+auto-post scan
 
-### 4.2 Google Drive にアップロード
+# フォルダ一覧表示
+auto-post list-folders
 
-1. 展開したフォルダを Google Drive にアップロード
-2. アップロード先フォルダのIDを控える（URLの `/folders/` の後ろの文字列）
+# 今日の投稿を実行
+auto-post post
 
-### 4.3 出力先フォルダの作成
+# 特定日の投稿を実行
+auto-post post --date 2025-01-20
 
-1. Google Drive に「Instagram投稿用」フォルダを作成
-2. フォルダIDを控える
+# テスト投稿
+auto-post test-post FOLDER_ID --platform both
 
-### 4.4 グルーピング実行
+# トークン更新
+auto-post refresh-token
 
-1. スプレッドシートで「自動投稿システム」→「Phase 1: 初期処理」→「グルーピング実行」
-2. ソースフォルダID、出力先フォルダIDを入力
-3. 処理完了を待つ
-
-### 4.5 フォルダスキャン
-
-1. 「自動投稿システム」→「Phase 1: 初期処理」→「フォルダスキャン」
-2. 「Instagram投稿用」フォルダのIDを入力
-3. メインシートに作品一覧が生成される
-
----
-
-## Step 5: スケジュール設定と投稿
-
-### 5.1 作品名の入力（オプション）
-
-メインシートの `work_name` 列に作品名を入力すると、キャプションが自動生成されます。
-
-### 5.2 スケジュール設定
-
-1. 「自動投稿システム」→「Phase 1: 初期処理」→「スケジュール設定」
-2. 開始日を入力
-3. 土日も投稿するか選択
-
-### 5.3 テスト投稿
-
-1. メインシートで任意の行を選択
-2. 「自動投稿システム」→「Phase 2: 投稿」→「テスト投稿（選択行）」
-3. Instagram / X を選んで投稿を確認
-
-### 5.4 定期実行トリガーの設定
-
-1. 「自動投稿システム」→「メンテナンス」→「定期実行トリガーを設定」
-2. 設定シートの `POST_TIME` の時刻に毎日実行される
+# デバッグモード
+auto-post --debug post
+```
 
 ---
 
@@ -246,9 +274,9 @@ https://graph.facebook.com/v18.0/{ページID}?fields=instagram_business_account
 
 ### Instagram投稿が失敗する
 
-- トークンの有効期限を確認
-- Instagram Business Account IDが正しいか確認
-- 画像のサイズ・形式がInstagramの要件を満たしているか確認
+- トークンの有効期限を確認（60日で失効）
+- `auto-post refresh-token` でトークンを更新
+- 画像サイズがInstagramの要件を満たしているか確認
 
 ### X投稿が失敗する
 
@@ -258,23 +286,9 @@ https://graph.facebook.com/v18.0/{ページID}?fields=instagram_business_account
 ### R2アップロードが失敗する
 
 - Access Key ID と Secret Access Key が正しいか確認
-- バケット名が正しいか確認
-- Account IDが正しいか確認
+- バケット名とAccount IDが正しいか確認
 
----
+### Google API エラー
 
-## メンテナンス
-
-### Instagramトークンの更新
-
-システムは自動的にトークンの有効期限をチェックし、残り15日を切ると自動更新します。
-手動で確認・更新する場合:
-
-「自動投稿システム」→「メンテナンス」→「Instagramトークン確認・更新」
-
-### 新規作品の追加（継続運用）
-
-1. Google Drive の「Instagram投稿用」フォルダに新規フォルダを作成
-2. 写真をアップロード
-3. 「自動投稿システム」→「Phase 3: 運用」→「新規フォルダをスキャン」
-4. 自動的にスプレッドシートに追加され、スケジュールが設定される
+- サービスアカウントにスプレッドシート・フォルダへのアクセス権限があるか確認
+- credentials.json が正しい場所にあるか確認
