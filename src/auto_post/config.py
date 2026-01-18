@@ -55,6 +55,7 @@ class R2Config:
     access_key_id: str
     secret_access_key: str
     bucket_name: str
+    public_url: str | None  # For public bucket access
 
     @classmethod
     def from_env(cls) -> "R2Config":
@@ -63,6 +64,7 @@ class R2Config:
             access_key_id=os.environ["R2_ACCESS_KEY_ID"],
             secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
             bucket_name=os.environ.get("R2_BUCKET_NAME", "instagram-temp"),
+            public_url=os.environ.get("R2_PUBLIC_URL"),
         )
 
     @property
@@ -71,21 +73,17 @@ class R2Config:
 
 
 @dataclass
-class GoogleConfig:
-    """Google API configuration."""
+class NotionConfig:
+    """Notion API configuration."""
 
-    credentials_path: Path
-    spreadsheet_id: str
-    drive_folder_id: str
+    token: str
+    database_id: str
 
     @classmethod
-    def from_env(cls) -> "GoogleConfig":
+    def from_env(cls) -> "NotionConfig":
         return cls(
-            credentials_path=Path(
-                os.environ.get("GOOGLE_CREDENTIALS_PATH", "credentials.json")
-            ),
-            spreadsheet_id=os.environ["GOOGLE_SPREADSHEET_ID"],
-            drive_folder_id=os.environ["GOOGLE_DRIVE_FOLDER_ID"],
+            token=os.environ["NOTION_TOKEN"],
+            database_id=os.environ["NOTION_DATABASE_ID"],
         )
 
 
@@ -96,9 +94,7 @@ class Config:
     instagram: InstagramConfig
     x: XConfig
     r2: R2Config
-    google: GoogleConfig
-    notification_email: str | None
-    grouping_threshold_minutes: int
+    notion: NotionConfig
     default_tags: str
 
     @classmethod
@@ -113,11 +109,7 @@ class Config:
             instagram=InstagramConfig.from_env(),
             x=XConfig.from_env(),
             r2=R2Config.from_env(),
-            google=GoogleConfig.from_env(),
-            notification_email=os.environ.get("NOTIFICATION_EMAIL"),
-            grouping_threshold_minutes=int(
-                os.environ.get("GROUPING_THRESHOLD_MINUTES", "10")
-            ),
+            notion=NotionConfig.from_env(),
             default_tags=os.environ.get(
                 "DEFAULT_TAGS",
                 "#木彫り教室生徒作品 #木彫り #woodcarving #彫刻 #handcarved #woodart #ハンドメイド #手仕事",
@@ -128,21 +120,3 @@ class Config:
 # Constants
 INSTAGRAM_MAX_CAROUSEL = 10
 X_MAX_IMAGES = 4
-
-# Spreadsheet column indices (0-based)
-class Columns:
-    FOLDER_ID = 0
-    FOLDER_NAME = 1
-    FOLDER_LINK = 2
-    IMAGE_COUNT = 3
-    FIRST_PHOTO_DATE = 4
-    WORK_NAME = 5
-    SCHEDULED_DATE = 6
-    SKIP = 7
-    CAPTION = 8
-    TAGS = 9
-    IG_POSTED = 10
-    IG_POST_ID = 11
-    X_POSTED = 12
-    X_POST_ID = 13
-    ERROR_LOG = 14

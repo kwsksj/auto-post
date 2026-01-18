@@ -37,26 +37,6 @@ def main(ctx, env_file: Path | None, debug: bool):
 
 
 @main.command()
-@click.pass_context
-def setup(ctx):
-    """Initialize the spreadsheet with headers."""
-    config = Config.load(ctx.obj.get("env_file"))
-    poster = Poster(config)
-    poster.setup_spreadsheet()
-    click.echo("Spreadsheet initialized successfully")
-
-
-@main.command()
-@click.pass_context
-def scan(ctx):
-    """Scan Google Drive folders and update spreadsheet."""
-    config = Config.load(ctx.obj.get("env_file"))
-    poster = Poster(config)
-    count = poster.scan_folders()
-    click.echo(f"Added {count} new folders to spreadsheet")
-
-
-@main.command()
 @click.option("--date", type=click.DateTime(formats=["%Y-%m-%d"]), help="Target date (default: today)")
 @click.pass_context
 def post(ctx, date: datetime | None):
@@ -77,7 +57,7 @@ def post(ctx, date: datetime | None):
 
 
 @main.command()
-@click.argument("folder_id")
+@click.argument("page_id")
 @click.option(
     "--platform",
     type=click.Choice(["instagram", "x", "both"]),
@@ -85,12 +65,12 @@ def post(ctx, date: datetime | None):
     help="Platform to post to",
 )
 @click.pass_context
-def test_post(ctx, folder_id: str, platform: str):
-    """Test post a specific folder."""
+def test_post(ctx, page_id: str, platform: str):
+    """Test post a specific Notion page."""
     config = Config.load(ctx.obj.get("env_file"))
     poster = Poster(config)
 
-    result = poster.test_post(folder_id, platform)
+    result = poster.test_post(page_id, platform)
 
     if "instagram_post_id" in result:
         click.echo(f"Instagram post ID: {result['instagram_post_id']}")
@@ -114,22 +94,54 @@ def refresh_token(ctx):
 
 
 @main.command()
+@click.option("--student", help="Filter by student name")
+@click.option("--unposted", is_flag=True, help="Show only unposted items")
 @click.pass_context
-def list_folders(ctx):
-    """List all work folders in Google Drive."""
+def list_works(ctx, student: str | None, unposted: bool):
+    """List all work items from Notion."""
     config = Config.load(ctx.obj.get("env_file"))
-    from .google_api import GoogleAPI
+    poster = Poster(config)
 
-    google = GoogleAPI(config.google)
-    folders = google.list_folders()
+    works = poster.list_works(student=student, only_unposted=unposted)
 
-    click.echo(f"Found {len(folders)} folders:\n")
-    for folder in folders:
-        click.echo(f"  {folder.name} ({folder.image_count} images)")
-        click.echo(f"    ID: {folder.id}")
-        if folder.first_photo_date:
-            click.echo(f"    First photo: {folder.first_photo_date.strftime('%Y-%m-%d %H:%M')}")
+    click.echo(f"Found {len(works)} works:\n")
+    for work in works:
+        status = []
+        if work.ig_posted:
+            status.append("IG")
+        if work.x_posted:
+            status.append("X")
+        status_str = f" [{','.join(status)}]" if status else ""
+
+        click.echo(f"  {work.work_name}{status_str}")
+        click.echo(f"    Page ID: {work.page_id}")
+        if work.student_name:
+            click.echo(f"    Student: {work.student_name}")
+        if work.scheduled_date:
+            click.echo(f"    Scheduled: {work.scheduled_date.strftime('%Y-%m-%d')}")
+        click.echo(f"    Images: {len(work.image_urls)}")
         click.echo()
+
+
+@main.command()
+@click.pass_context
+def check_notion(ctx):
+    """Check Notion database connection and schema."""
+    config = Config.load(ctx.obj.get("env_file"))
+    from .notion_db import NotionDB
+
+    notion = NotionDB(config.notion.token, config.notion.database_id)
+
+    try:
+        info = notion.get_database_info()
+        click.echo(f"Database: {info['title'][0]['plain_text'] if info.get('title') else 'Untitled'}")
+        click.echo(f"ID: {info['id']}")
+        click.echo("\nProperties:")
+        for name, prop in info.get("properties", {}).items():
+            click.echo(f"  - {name} ({prop['type']})")
+    except Exception as e:
+        click.echo(f"Error connecting to Notion: {e}", err=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

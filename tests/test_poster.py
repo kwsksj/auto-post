@@ -12,8 +12,8 @@ class TestGenerateCaption:
         """Test caption generation with work name."""
         result = generate_caption(
             work_name="ふくろう",
-            custom_caption="",
-            tags="",
+            custom_caption=None,
+            tags=None,
             default_tags="#tag1 #tag2",
         )
         assert result == "ふくろうの木彫りです！\n\n#tag1 #tag2"
@@ -32,7 +32,7 @@ class TestGenerateCaption:
         """Test custom tags override default."""
         result = generate_caption(
             work_name="ねこ",
-            custom_caption="",
+            custom_caption=None,
             tags="#猫 #cat",
             default_tags="#tag1 #tag2",
         )
@@ -42,8 +42,8 @@ class TestGenerateCaption:
         """Test with empty work name returns only tags."""
         result = generate_caption(
             work_name="",
-            custom_caption="",
-            tags="",
+            custom_caption=None,
+            tags=None,
             default_tags="#tag1 #tag2",
         )
         assert result == "#tag1 #tag2"
@@ -52,8 +52,18 @@ class TestGenerateCaption:
         """Test whitespace is trimmed."""
         result = generate_caption(
             work_name="  いぬ  ",
-            custom_caption="",
+            custom_caption=None,
             tags="  #dog  ",
             default_tags="#tag1",
         )
         assert result == "いぬの木彫りです！\n\n#dog"
+
+    def test_none_values(self):
+        """Test with None values."""
+        result = generate_caption(
+            work_name="くま",
+            custom_caption=None,
+            tags=None,
+            default_tags="#default",
+        )
+        assert result == "くまの木彫りです！\n\n#default"

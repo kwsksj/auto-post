@@ -9,10 +9,7 @@ description = "Instagram/X auto-posting system for woodcarving class photos"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "google-api-python-client>=2.100.0",
-    "google-auth-httplib2>=0.1.0",
-    "google-auth-oauthlib>=1.0.0",
-    "gspread>=5.10.0",
+    "notion-client>=2.0.0",
     "boto3>=1.28.0",
     "tweepy>=4.14.0",
     "requests>=2.31.0",
