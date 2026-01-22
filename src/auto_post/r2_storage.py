@@ -91,3 +91,29 @@ class R2Storage:
                 self.delete(key)
             except Exception as e:
                 logger.warning(f"Failed to delete temporary file {key}: {e}")
+
+    def put_json(self, data: dict, key: str):
+        """Save a dictionary as JSON to R2."""
+        import json
+        logger.info(f"Saving JSON to R2: {key}")
+        self.upload(json.dumps(data).encode("utf-8"), key, "application/json")
+
+    def get_json(self, key: str) -> dict | None:
+        """Retrieve a dictionary from JSON in R2. Returns None if not found."""
+        import json
+        from botocore.exceptions import ClientError
+
+        try:
+            client = self._create_client()
+            response = client.get_object(Bucket=self.config.bucket_name, Key=key)
+            content = response["Body"].read().decode("utf-8")
+            return json.loads(content)
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "NoSuchKey":
+                logger.info(f"JSON not found in R2: {key}")
+                return None
+            logger.error(f"Error reading from R2 {key}: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to read JSON {key}: {e}")
+            return None

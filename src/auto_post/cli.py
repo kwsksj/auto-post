@@ -84,14 +84,21 @@ def test_post(ctx, page_id: str, platform: str):
 def refresh_token(ctx):
     """Refresh the Instagram access token."""
     config = Config.load(ctx.obj.get("env_file"))
-    from .instagram import InstagramClient
+    from .r2_storage import R2Storage
+    from .token_manager import TokenManager
 
-    client = InstagramClient(config.instagram)
-    new_token, expiry = client.refresh_token()
+    r2 = R2Storage(config.r2)
+    tm = TokenManager(r2, config.instagram)
 
-    click.echo(f"New token: {new_token[:20]}...")
-    click.echo(f"Expiry: {expiry.strftime('%Y-%m-%d')}")
-    click.echo("\nPlease update INSTAGRAM_ACCESS_TOKEN in your .env file or GitHub secrets")
+    click.echo("Refeshing token...")
+    new_token = tm.force_refresh()
+
+    if new_token:
+        click.echo(f"Success! New token saved to R2/Context.")
+        click.echo(f"Token: {new_token[:20]}...")
+    else:
+        click.echo("Failed to refresh token.", err=True)
+        sys.exit(1)
 
 
 @main.command()

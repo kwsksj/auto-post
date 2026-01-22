@@ -10,6 +10,7 @@ from .config import Config
 from .instagram import InstagramAPIError, InstagramClient
 from .notion_db import NotionDB, WorkItem
 from .r2_storage import R2Storage
+from .token_manager import TokenManager
 from .x_twitter import XAPIError, XClient
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,14 @@ class Poster:
         self.config = config
         self.notion = NotionDB(config.notion.token, config.notion.database_id)
         self.r2 = R2Storage(config.r2)
+
+        # Token Management
+        self.token_manager = TokenManager(self.r2, config.instagram)
+        valid_token = self.token_manager.get_valid_token()
+
+        # Update config with valid token
+        config.instagram.access_token = valid_token
+
         self.instagram = InstagramClient(config.instagram)
         self.x = XClient(config.x)
 
