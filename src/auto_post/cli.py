@@ -56,7 +56,7 @@ def post(ctx, date: datetime | None, dry_run: bool, platform: str):
 
     # Convert platform arg to list
     if platform == "all":
-        platforms = ["instagram", "x", "threads"]
+        platforms = ["instagram", "threads"]  # X is excluded by default
     else:
         platforms = [platform]
 

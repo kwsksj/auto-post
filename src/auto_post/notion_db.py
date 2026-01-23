@@ -442,9 +442,9 @@ class NotionDB:
                        If None or empty, checks all platforms.
                        Valid values: "instagram", "x", "threads"
         """
-        # Build platform-specific filters
+        # Build platform-specific filters (OR condition: at least one platform is unposted)
         if platforms is None or len(platforms) == 0:
-            platforms = ["instagram", "x", "threads"]
+            platforms = ["instagram", "threads"]  # X is excluded by default
 
         platform_filters = []
         platform_prop_map = {
@@ -473,8 +473,12 @@ class NotionDB:
                 "checkbox": {"equals": False}
             },
         ]
-        # Add platform filters
-        base_filters.extend(platform_filters)
+
+        # Platform filter: OR condition (any platform unposted)
+        if len(platform_filters) > 1:
+            base_filters.append({"or": platform_filters})
+        elif len(platform_filters) == 1:
+            base_filters.append(platform_filters[0])
 
         response = self.client.request(
             path=f"databases/{self.database_id}/query",

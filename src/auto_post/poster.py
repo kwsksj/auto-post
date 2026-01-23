@@ -191,7 +191,7 @@ class Poster:
     def _process_post(self, post: WorkItem, stats: dict, dry_run: bool = False, platforms: list[str] | None = None):
         """Process a single post."""
         if platforms is None:
-            platforms = ["instagram", "x", "threads"]
+            platforms = ["instagram", "threads"]  # X is excluded by default
 
         logger.info(f"Processing: {post.work_name} (Dry Run: {dry_run}, Platforms: {platforms})")
 
