@@ -20,6 +20,11 @@ on:
           - x
           - threads
         default: all
+      dry_run:
+        description: "Dry run (preview only, no actual posting)"
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   post:
@@ -84,6 +89,10 @@ jobs:
 
           if [ -n "${{ github.event.inputs.platform }}" ]; then
             CMD="$CMD --platform ${{ github.event.inputs.platform }}"
+          fi
+
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            CMD="$CMD --dry-run"
           fi
 
           echo "Running: $CMD"
