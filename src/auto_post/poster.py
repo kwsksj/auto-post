@@ -36,6 +36,7 @@ def generate_caption(
 
     if creation_date:
         date_str = creation_date.strftime("%Y年%m月%d日")
+        lines.append("")  # 空行
         lines.append(f"完成日: {date_str}")
 
     caption = "\n".join(lines)
@@ -205,6 +206,11 @@ class Poster:
             self.config.default_tags,
             creation_date=post.creation_date,
         )
+
+        # In dry-run mode, show caption preview
+        if dry_run:
+            logger.info(f"  Images: {len(post.image_urls)}")
+            logger.info(f"  Caption:\n{caption}\n")
 
         # Download images from URLs
         images_data = []
