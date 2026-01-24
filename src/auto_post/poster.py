@@ -304,9 +304,15 @@ class Poster:
 
             # Post to Instagram
             if len(image_urls) == 1:
-                return self.instagram.post_single_image(image_urls[0], caption)
+                post_id = self.instagram.post_single_image(image_urls[0], caption)
             else:
-                return self.instagram.post_carousel(image_urls, caption)
+                post_id = self.instagram.post_carousel(image_urls, caption)
+
+            # Wait for Instagram to finish downloading images before deleting R2 files
+            logger.debug("Waiting for Instagram to download images...")
+            time.sleep(5)
+
+            return post_id
 
         finally:
             # Clean up R2 files
@@ -330,9 +336,16 @@ class Poster:
 
             # Post to Threads
             if len(image_urls) == 1:
-                return self.threads.post_single_image(image_urls[0], caption)
+                post_id = self.threads.post_single_image(image_urls[0], caption)
             else:
-                return self.threads.post_carousel(image_urls, caption)
+                post_id = self.threads.post_carousel(image_urls, caption)
+
+            # Wait for Threads to finish downloading images before deleting R2 files
+            # Threads API downloads images asynchronously after publish
+            logger.info("Waiting for Threads to download images...")
+            time.sleep(10)
+
+            return post_id
 
         finally:
             # Clean up R2 files
