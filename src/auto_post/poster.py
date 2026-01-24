@@ -16,6 +16,10 @@ from .threads import ThreadsClient, ThreadsAPIError
 
 logger = logging.getLogger(__name__)
 
+# Wait time for Threads API to download images after publish
+# Threads downloads images asynchronously after container is published
+THREADS_IMAGE_DOWNLOAD_WAIT_SECONDS = 10
+
 
 def generate_caption(
     work_name: str,
@@ -303,6 +307,8 @@ class Poster:
                 image_urls.append(url)
 
             # Post to Instagram
+            # Note: Instagram's post_* methods already wait for media to be FINISHED before publishing,
+            # so no additional wait is needed before deleting R2 files
             if len(image_urls) == 1:
                 return self.instagram.post_single_image(image_urls[0], caption)
             else:
@@ -330,9 +336,16 @@ class Poster:
 
             # Post to Threads
             if len(image_urls) == 1:
-                return self.threads.post_single_image(image_urls[0], caption)
+                post_id = self.threads.post_single_image(image_urls[0], caption)
             else:
-                return self.threads.post_carousel(image_urls, caption)
+                post_id = self.threads.post_carousel(image_urls, caption)
+
+            # Wait for Threads to finish downloading images before deleting R2 files
+            # Threads API downloads images asynchronously after publish, even after container is FINISHED
+            logger.info(f"Waiting {THREADS_IMAGE_DOWNLOAD_WAIT_SECONDS}s for Threads to download images...")
+            time.sleep(THREADS_IMAGE_DOWNLOAD_WAIT_SECONDS)
+
+            return post_id
 
         finally:
             # Clean up R2 files
