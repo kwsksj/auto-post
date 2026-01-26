@@ -2,8 +2,8 @@ name: Daily Auto Post
 
 on:
   schedule:
-    # Runs at 07:42 UTC every day (16:42 JST)
-    - cron: "42 7 * * *"
+    # Runs every 10 minutes for testing
+    - cron: "*/10 * * * *"
   workflow_dispatch:
     inputs:
       date:
@@ -72,7 +72,7 @@ jobs:
           R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
 
         run: |
-          CMD="auto-post post"
+          CMD="auto-post post --dry-run"
 
           if [ -n "${{ github.event.inputs.date }}" ]; then
             CMD="$CMD --date ${{ github.event.inputs.date }}"
