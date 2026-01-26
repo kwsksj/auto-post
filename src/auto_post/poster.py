@@ -206,15 +206,6 @@ class Poster:
                 results["errors"].append(f"{post.work_name} ({e})")
                 self.notion.update_post_status(post.page_id, error_log=f"Processing error: {e}")
 
-        logger.info("-" * 30)
-        logger.info("Daily Post Summary")
-        logger.info(f"Processed: {len(results['processed'])}")
-        logger.info(f"Instagram ({len(results['ig_success'])}): {', '.join(results['ig_success'])}")
-        logger.info(f"Threads ({len(results['threads_success'])}): {', '.join(results['threads_success'])}")
-        logger.info(f"X ({len(results['x_success'])}): {', '.join(results['x_success'])}")
-        logger.info(f"Errors ({len(results['errors'])}): {'; '.join(results['errors'])}")
-        logger.info("-" * 30)
-
         return results
 
     def _process_post(self, post: WorkItem, dry_run: bool = False, platforms: list[str] | None = None) -> dict:

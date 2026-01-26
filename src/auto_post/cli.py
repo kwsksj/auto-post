@@ -62,13 +62,22 @@ def post(ctx, date: datetime | None, dry_run: bool, platform: str):
 
     stats = poster.run_daily_post(target_date, dry_run=dry_run, platforms=platforms)
 
-    click.echo(f"Processed: {stats['processed']}")
-    click.echo(f"Instagram success: {stats['ig_success']}")
-    click.echo(f"X success: {stats['x_success']}")
-    click.echo(f"Threads success: {stats.get('threads_success', 0)}")
-    click.echo(f"Errors: {stats['errors']}")
+    click.echo("\n" + "=" * 30)
+    click.echo("Daily Post Summary")
+    click.echo("=" * 30)
+    click.echo(f"Processed ({len(stats['processed'])}): {', '.join(stats['processed'])}")
+    click.echo(f"Instagram ({len(stats['ig_success'])}): {', '.join(stats['ig_success'])}")
+    click.echo(f"Threads   ({len(stats.get('threads_success', []))}): {', '.join(stats.get('threads_success', []))}")
+    click.echo(f"X         ({len(stats['x_success'])}): {', '.join(stats['x_success'])}")
 
-    if stats["errors"] > 0:
+    if stats['errors']:
+        click.echo("-" * 30)
+        click.echo(f"Errors    ({len(stats['errors'])}): {'; '.join(stats['errors'])}")
+    else:
+        click.echo(f"Errors    (0)")
+    click.echo("=" * 30)
+
+    if len(stats["errors"]) > 0:
         sys.exit(1)
 
 
