@@ -275,6 +275,77 @@ class Poster:
 
         return results
 
+    def run_catchup_post(self, limit: int = 1, dry_run: bool = False, platforms: list[str] | None = None) -> dict:
+        """
+        Run catch-up posting only.
+
+        For each platform, select 'limit' number of posts that:
+        - Are NOT posted on the target platform
+        - ARE posted on at least one other platform
+        """
+        # Platforms to process
+        target_platforms = platforms if platforms else ["instagram", "x", "threads"]
+        all_supported_platforms = ["instagram", "x", "threads"]
+
+        # Queues per platform
+        platform_queues = {p: [] for p in all_supported_platforms}
+        unique_works = {}
+
+        logger.info(f"Starting catch-up post (Limit: {limit}, Platforms: {target_platforms})")
+
+        for p in target_platforms:
+            other_platforms = [op for op in all_supported_platforms if op != p]
+            candidates = self.notion.get_catchup_candidates(p, other_platforms, limit=limit)
+
+            added_count = 0
+            for work in candidates:
+                platform_queues[p].append(work.page_id)
+                unique_works[work.page_id] = work
+                added_count += 1
+
+            if added_count > 0:
+                logger.info(f"[{p}] Added {added_count} catch-up posts")
+
+        # Process each work
+        results = {
+            "processed": [],
+            "ig_success": [],
+            "x_success": [],
+            "threads_success": [],
+            "errors": []
+        }
+
+        # Sort by creation date
+        sorted_works = sorted(
+            unique_works.values(),
+            key=lambda w: w.creation_date if w.creation_date else datetime.max
+        )
+
+        for work in sorted_works:
+            # Determine target platforms for this work
+            target_ps = [p for p, q in platform_queues.items() if work.page_id in q]
+
+            if not target_ps:
+                continue
+
+            try:
+                post_results = self._process_post(work, dry_run=dry_run, platforms=target_ps)
+                results["processed"].append(work.work_name)
+
+                if post_results.get("instagram"):
+                    results["ig_success"].append(work.work_name)
+                if post_results.get("threads"):
+                    results["threads_success"].append(work.work_name)
+                if post_results.get("x"):
+                    results["x_success"].append(work.work_name)
+
+                time.sleep(5)
+            except Exception as e:
+                logger.error(f"Failed to process post {work.work_name}: {e}")
+                results["errors"].append(f"{work.work_name} ({e})")
+
+        return results
+
     def _process_post(self, post: WorkItem, dry_run: bool = False, platforms: list[str] | None = None) -> dict:
         """Process a single post. Returns dict of success status by platform."""
         status = {"instagram": False, "x": False, "threads": False}

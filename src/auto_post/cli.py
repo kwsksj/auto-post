@@ -82,6 +82,48 @@ def post(ctx, date: datetime | None, dry_run: bool, platform: str):
 
 
 @main.command()
+@click.option("--limit", "-n", default=1, help="Number of posts per platform (default: 1)")
+@click.option("--dry-run", is_flag=True, help="Preview without executing")
+@click.option(
+    "--platform",
+    "-p",
+    type=click.Choice(["instagram", "x", "threads", "all"]),
+    default="all",
+    help="Target platform (default: all)",
+)
+@click.pass_context
+def catchup(ctx, limit: int, dry_run: bool, platform: str):
+    """Run catch-up posts only."""
+    config = Config.load(ctx.obj.get("env_file"))
+    poster = Poster(config)
+
+    # Convert platform arg to list
+    if platform == "all":
+        platforms = ["instagram", "threads", "x"]
+    else:
+        platforms = [platform]
+
+    stats = poster.run_catchup_post(limit=limit, dry_run=dry_run, platforms=platforms)
+
+    click.echo("\n" + "=" * 30)
+    click.echo("Catch-up Post Summary")
+    click.echo("=" * 30)
+    click.echo(f"Processed ({len(stats['processed'])}): {', '.join(stats['processed'])}")
+    click.echo(f"Instagram ({len(stats['ig_success'])}): {', '.join(stats['ig_success'])}")
+    click.echo(f"Threads   ({len(stats.get('threads_success', []))}): {', '.join(stats.get('threads_success', []))}")
+    click.echo(f"X         ({len(stats['x_success'])}): {', '.join(stats['x_success'])}")
+
+    if stats['errors']:
+        click.echo("-" * 30)
+        click.echo(f"Errors    ({len(stats['errors'])}): {'; '.join(stats['errors'])}")
+    else:
+        click.echo(f"Errors    (0)")
+    click.echo("=" * 30)
+
+    if len(stats["errors"]) > 0:
+        sys.exit(1)
+
+@main.command()
 @click.argument("page_id")
 @click.option(
     "--platform",
