@@ -250,7 +250,7 @@ GitHub リポジトリ → Settings → Secrets and variables → Actions
 
 ### 7.2 自動実行
 
-- 毎日 12:00 JST に自動実行
+- 毎日 16:42 JST (07:42 UTC) に自動実行
 - 手動実行: Actions → Daily Post → Run workflow
 
 ---

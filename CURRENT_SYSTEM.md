@@ -21,7 +21,7 @@
 ```
 Notion データベース（投稿管理）
     ↓
-GitHub Actions (毎日 12:00 JST)
+GitHub Actions (毎日 16:42 JST)
     ↓
 auto-post CLI (Python)
     ├→ Instagram Graph API
@@ -110,10 +110,6 @@ auto-post import-groups output.json
 | `THREADS_APP_SECRET`            | Threads用 App Secret             |
 | `THREADS_ACCESS_TOKEN`          | Threads長期トークン              |
 | `THREADS_USER_ID`               | Threads ユーザーID               |
-| `X_API_KEY`                     | X API Key (Consumer Key)         |
-| `X_API_KEY_SECRET`              | X API Key Secret (Consumer Secret) |
-| `X_ACCESS_TOKEN`                | X Access Token (Read/Write)      |
-| `X_ACCESS_TOKEN_SECRET`         | X Access Token Secret            |
 | `R2_ACCOUNT_ID`                 | Cloudflare Account ID            |
 | `R2_ACCESS_KEY_ID`              | R2 Access Key                    |
 | `R2_SECRET_ACCESS_KEY`          | R2 Secret Key                    |
@@ -121,9 +117,13 @@ auto-post import-groups output.json
 
 ### オプション
 
-| 変数名          | 説明    | デフォルト |
-| --------------- | ------- | ---------- |
-| `R2_PUBLIC_URL` | 公開URL | なし       |
+| 変数名                          | 説明                             | デフォルト |
+| ------------------------------- | -------------------------------- | ---------- |
+| `R2_PUBLIC_URL`                 | 公開URL                          | なし       |
+| `X_API_KEY`                     | X API Key (Consumer Key)         | なし       |
+| `X_API_KEY_SECRET`              | X API Key Secret                 | なし       |
+| `X_ACCESS_TOKEN`                | X Access Token                   | なし       |
+| `X_ACCESS_TOKEN_SECRET`         | X Access Token Secret            | なし       |
 
 ---
 
@@ -221,7 +221,7 @@ auto-post import-groups output.json
 
 ### ワークフロー: `schedule.yml`
 
-- **スケジュール**: 毎日 12:00 JST (03:00 UTC)
+- **スケジュール**: 毎日 16:42 JST (07:42 UTC)
 - **手動実行オプション**:
   - `date`: 対象日指定
   - `platform`: プラットフォーム選択 (all/instagram/x/threads)
