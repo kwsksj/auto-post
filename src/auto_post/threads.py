@@ -11,7 +11,9 @@ logger = logging.getLogger(__name__)
 
 class ThreadsAPIError(Exception):
     """Base exception for Threads API errors."""
-    pass
+    def __init__(self, message: str, code: int | None = None):
+        super().__init__(message)
+        self.code = code
 
 
 class ThreadsClient:
@@ -39,16 +41,22 @@ class ThreadsClient:
             return response.json()
         except requests.exceptions.RequestException as e:
             error_msg = str(e)
+            error_code = None
             if e.response is not None:
                 try:
                     error_data = e.response.json()
                     if "error" in error_data:
-                        error_msg = f"{error_data['error'].get('message')} (Code: {error_data['error'].get('code')})"
+                        code_val = error_data['error'].get('code')
+                        error_msg = f"{error_data['error'].get('message')} (Code: {code_val})"
+                        try:
+                            error_code = int(code_val)
+                        except (ValueError, TypeError):
+                            pass
                 except ValueError:
                     error_msg = e.response.text
 
             logger.error(f"Threads API Error: {error_msg}")
-            raise ThreadsAPIError(error_msg)
+            raise ThreadsAPIError(error_msg, code=error_code)
 
     def get_user_id(self) -> str:
         """Get the Thread user's ID."""
@@ -122,7 +130,7 @@ class ThreadsClient:
 
         data = {
             "media_type": "CAROUSEL",
-            "children": ",".join(children_ids) # Send as comma-separated string
+            "children": children_ids  # Send as list of strings
         }
 
         if caption:
@@ -176,7 +184,12 @@ class ThreadsClient:
                     # IN_PROGRESS or other transient states
                     logger.debug(f"Container {container_id} status: {status}, waiting... (attempt {attempt + 1}/{max_attempts})")
                     time.sleep(interval)
-            except ThreadsAPIError:
+            except ThreadsAPIError as e:
+                # If resource doesn't exist yet (Code 24), wait and retry
+                if e.code == 24:
+                    logger.warning(f"Container {container_id} not found (Code 24), retrying... (attempt {attempt + 1}/{max_attempts})")
+                    time.sleep(interval)
+                    continue
                 raise
             except Exception as e:
                 logger.warning(f"Error checking container status: {e}")
