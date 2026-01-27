@@ -601,3 +601,112 @@ class NotionDB:
         if properties:
             self.client.pages.update(page_id=page_id, properties=properties)
             logger.info(f"Updated location for page {page_id}: {classroom}")
+    def get_catchup_candidates(self, target_platform: str, other_platforms: list[str], limit: int = 10) -> list[WorkItem]:
+        """
+        Get candidates for 'Catch-up Post'.
+        Condition: Unposted on target_platform AND posted on at least one other_platform.
+        """
+        platform_prop_map = {
+            "instagram": "Instagram投稿済",
+            "x": "X投稿済",
+            "threads": "Threads投稿済",
+        }
+
+        target_prop = platform_prop_map.get(target_platform)
+        if not target_prop:
+            logger.warning(f"Invalid target platform: {target_platform}")
+            return []
+
+        # Filter: Target Platform is Unposted
+        filters = [
+            {
+                "property": target_prop,
+                "checkbox": {"equals": False}
+            },
+            {
+                "property": "投稿予定日",
+                "date": {"is_empty": True},
+            },
+            {
+                "property": "スキップ",
+                "checkbox": {"equals": False}
+            }
+        ]
+
+        # Filter: At least one Other Platform is Posted
+        other_filters = []
+        for p in other_platforms:
+            prop = platform_prop_map.get(p)
+            if prop:
+                other_filters.append({
+                    "property": prop,
+                    "checkbox": {"equals": True}
+                })
+
+        if other_filters:
+            filters.append({"or": other_filters})
+
+        response = self.client.request(
+            path=f"databases/{self.database_id}/query",
+            method="POST",
+            body={
+                "filter": {
+                    "and": filters
+                },
+                "sorts": [
+                    {"property": "完成日", "direction": "ascending"},
+                    {"timestamp": "created_time", "direction": "ascending"}
+                ],
+                "page_size": limit,
+            },
+        )
+
+        return [self._parse_page(page) for page in response["results"]]
+
+    def get_basic_candidates(self, target_platform: str, limit: int = 10) -> list[WorkItem]:
+        """
+        Get candidates for 'Basic Post'.
+        Condition: Unposted on target_platform.
+        """
+        platform_prop_map = {
+            "instagram": "Instagram投稿済",
+            "x": "X投稿済",
+            "threads": "Threads投稿済",
+        }
+
+        target_prop = platform_prop_map.get(target_platform)
+        if not target_prop:
+            logger.warning(f"Invalid target platform: {target_platform}")
+            return []
+
+        filters = [
+            {
+                "property": target_prop,
+                "checkbox": {"equals": False}
+            },
+            {
+                "property": "投稿予定日",
+                "date": {"is_empty": True},
+            },
+            {
+                "property": "スキップ",
+                "checkbox": {"equals": False}
+            }
+        ]
+
+        response = self.client.request(
+            path=f"databases/{self.database_id}/query",
+            method="POST",
+            body={
+                "filter": {
+                    "and": filters
+                },
+                "sorts": [
+                    {"property": "完成日", "direction": "ascending"},
+                    {"timestamp": "created_time", "direction": "ascending"}
+                ],
+                "page_size": limit,
+            },
+        )
+
+        return [self._parse_page(page) for page in response["results"]]

@@ -149,9 +149,10 @@ class Poster:
         """
         Run the daily posting job.
 
-        Priority:
-        1. Posts scheduled for today (投稿予定日 = target_date)
-        2. If none, oldest unposted work by 完成日 (1 per day)
+        Selection Order (Per Platform):
+        1. Date Designated (投稿予定日 = target_date)
+        2. Catch-up (Posted on other platforms but not target) - Limit 1
+        3. Basic (Oldest unposted) - Limit 3
 
         Returns:
             dict with 'processed', 'ig_success', 'x_success', 'errors' counts
@@ -161,24 +162,76 @@ class Poster:
 
         logger.info(f"Starting daily post for {target_date.strftime('%Y-%m-%d')}")
 
-        target_count = 3  # Target number of posts per day (User requested 3)
+        # Platforms to process
+        target_platforms = platforms if platforms else ["instagram", "x", "threads"]
+        all_supported_platforms = ["instagram", "x", "threads"]
 
-        # Priority 1: Get posts scheduled for today
-        posts = self.notion.get_posts_for_date(target_date)
-        logger.info(f"Found {len(posts)} posts scheduled for {target_date.strftime('%Y-%m-%d')}")
+        # Queues per platform (stores page_ids)
+        platform_queues = {p: [] for p in all_supported_platforms}
+        # Central registry of WorkItems (page_id -> WorkItem)
+        unique_works = {}
 
-        # Priority 2: Fill remaining slots with unscheduled works
-        remaining_slots = target_count - len(posts)
-        if remaining_slots > 0:
-            logger.info(f"Filling {remaining_slots} slots with unscheduled works...")
-            unscheduled_works = self.notion.get_unscheduled_works(limit=remaining_slots, platforms=platforms)
-            if unscheduled_works:
-                posts.extend(unscheduled_works)
-                logger.info(f"Added {len(unscheduled_works)} unscheduled works")
-            else:
-                logger.info("No more unscheduled works available")
-        else:
-            logger.info("Daily target met with scheduled posts")
+        # --- Phase 1: Selection ---
+
+        # 1. Date Designated (Global fetch, then assign to relevant platforms)
+        date_works = self.notion.get_posts_for_date(target_date)
+        logger.info(f"Found {len(date_works)} date-designated posts for {target_date.strftime('%Y-%m-%d')}")
+
+        for work in date_works:
+            unique_works[work.page_id] = work
+            for p in target_platforms:
+                # Check if already posted on this platform
+                is_posted = False
+                if p == "instagram":
+                    is_posted = work.ig_posted
+                elif p == "x":
+                    is_posted = work.x_posted
+                elif p == "threads":
+                    is_posted = work.threads_posted
+
+                if not is_posted:
+                    platform_queues[p].append(work.page_id)
+
+        # 2 & 3. Per-Platform Selection (Catch-up & Basic)
+        for p in target_platforms:
+            # 2. Catch-up Post (Limit 1)
+            other_platforms = [op for op in all_supported_platforms if op != p]
+            # Fetch candidates (fetch a bit more to allow for skipping duplicates)
+            catchup_candidates = self.notion.get_catchup_candidates(p, other_platforms, limit=5)
+
+            added_count = 0
+            for work in catchup_candidates:
+                if work.page_id in platform_queues[p]:
+                    continue # Already selected (e.g. by Date Designated)
+
+                platform_queues[p].append(work.page_id)
+                unique_works[work.page_id] = work
+                added_count += 1
+                if added_count >= 1:
+                    break
+
+            if added_count > 0:
+                logger.info(f"[{p}] Added {added_count} catch-up posts")
+
+            # 3. Basic Post (Limit 3)
+            basic_candidates = self.notion.get_basic_candidates(p, limit=10)
+
+            added_count = 0
+            for work in basic_candidates:
+                if work.page_id in platform_queues[p]:
+                    continue # Already selected
+
+                platform_queues[p].append(work.page_id)
+                unique_works[work.page_id] = work
+                added_count += 1
+                if added_count >= 3:
+                    break
+
+            if added_count > 0:
+                logger.info(f"[{p}] Added {added_count} basic posts")
+
+
+        # --- Phase 2: Processing ---
 
         results = {
             "processed": [],
@@ -188,23 +241,37 @@ class Poster:
             "errors": []
         }
 
-        for post in posts:
+        # Iterate through unique works
+        # Sort by creation date (optional, for log readability)
+        sorted_works = sorted(
+            unique_works.values(),
+            key=lambda w: w.creation_date if w.creation_date else datetime.max
+        )
+
+        for work in sorted_works:
+            # Determine which platforms this work is targeted for
+            target_ps = [p for p, q in platform_queues.items() if work.page_id in q]
+
+            if not target_ps:
+                continue
+
             try:
-                post_results = self._process_post(post, dry_run=dry_run, platforms=platforms)
-                results["processed"].append(post.work_name)
+                # Pass specific target platforms to _process_post
+                post_results = self._process_post(work, dry_run=dry_run, platforms=target_ps)
+                results["processed"].append(work.work_name)
 
                 if post_results.get("instagram"):
-                    results["ig_success"].append(post.work_name)
+                    results["ig_success"].append(work.work_name)
                 if post_results.get("threads"):
-                    results["threads_success"].append(post.work_name)
+                    results["threads_success"].append(work.work_name)
                 if post_results.get("x"):
-                    results["x_success"].append(post.work_name)
+                    results["x_success"].append(work.work_name)
 
-                time.sleep(5)  # Rate limit between posts (increased for Threads API)
+                time.sleep(5)  # Global rate limit between works
             except Exception as e:
-                logger.error(f"Failed to process post {post.work_name}: {e}")
-                results["errors"].append(f"{post.work_name} ({e})")
-                self.notion.update_post_status(post.page_id, error_log=f"Processing error: {e}")
+                logger.error(f"Failed to process post {work.work_name}: {e}")
+                results["errors"].append(f"{work.work_name} ({e})")
+                self.notion.update_post_status(work.page_id, error_log=f"Processing error: {e}")
 
         return results
 
