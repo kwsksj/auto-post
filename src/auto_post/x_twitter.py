@@ -9,6 +9,27 @@ from .config import X_MAX_IMAGES, XConfig
 
 logger = logging.getLogger(__name__)
 
+def _extract_tweepy_error_info(e: tweepy.TweepyException) -> tuple[int | None, object | None, str | None]:
+    """Extract status/errors/body from TweepyException when available."""
+    status = None
+    api_errors = None
+    body = None
+
+    response = getattr(e, "response", None)
+    if response is not None:
+        try:
+            status = response.status_code
+            body = response.text
+        except Exception:
+            pass
+
+    if hasattr(e, "api_errors"):
+        api_errors = e.api_errors
+    elif hasattr(e, "errors"):
+        api_errors = e.errors
+
+    return status, api_errors, body
+
 
 class XAPIError(Exception):
     """X API error."""
@@ -54,7 +75,23 @@ class XClient:
         # tweepy requires a file-like object
         import io
 
-        media = self.api.media_upload(filename=filename, file=io.BytesIO(content))
+        try:
+            media = self.api.media_upload(filename=filename, file=io.BytesIO(content))
+        except tweepy.TweepyException as e:
+            status, api_errors, body = _extract_tweepy_error_info(e)
+            detail_parts = []
+            if status is not None:
+                detail_parts.append(f"status={status}")
+            if api_errors:
+                detail_parts.append(f"api_errors={api_errors}")
+            if body:
+                detail_parts.append(f"body={body[:500]}")
+            if detail_parts:
+                logger.error(f"X media upload error details: {', '.join(detail_parts)}")
+            msg = f"Failed to upload media: {e}"
+            if status is not None:
+                msg += f" (status {status})"
+            raise XAPIError(msg) from e
         logger.info(f"Uploaded media: {media.media_id_string}")
         return media.media_id_string
 
@@ -92,7 +129,20 @@ class XClient:
             logger.info(f"Posted tweet: {tweet_id}")
             return tweet_id
         except tweepy.TweepyException as e:
-            raise XAPIError(f"Failed to post tweet: {e}") from e
+            status, api_errors, body = _extract_tweepy_error_info(e)
+            detail_parts = []
+            if status is not None:
+                detail_parts.append(f"status={status}")
+            if api_errors:
+                detail_parts.append(f"api_errors={api_errors}")
+            if body:
+                detail_parts.append(f"body={body[:500]}")
+            if detail_parts:
+                logger.error(f"X post error details: {', '.join(detail_parts)}")
+            msg = f"Failed to post tweet: {e}"
+            if status is not None:
+                msg += f" (status {status})"
+            raise XAPIError(msg) from e
 
     def post_text_only(self, text: str) -> str:
         """Post a text-only tweet."""

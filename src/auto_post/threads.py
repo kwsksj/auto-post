@@ -44,6 +44,12 @@ class ThreadsClient:
             error_code = None
             if e.response is not None:
                 try:
+                    status = e.response.status_code
+                    body = e.response.text
+                    logger.error(f"Threads API error details: status={status}, body={body[:500]}")
+                except Exception:
+                    pass
+                try:
                     error_data = e.response.json()
                     if "error" in error_data:
                         code_val = error_data['error'].get('code')
@@ -140,16 +146,29 @@ class ThreadsClient:
         logger.info(f"Created Threads carousel container: {response.get('id')}")
         return response["id"]
 
-    def publish_container(self, creation_id: str) -> str:
+    def publish_container(self, creation_id: str, max_attempts: int = 5, interval: float = 2.0) -> str:
         """Publish a container."""
         endpoint = "me/threads_publish"
         data = {
             "creation_id": creation_id
         }
 
-        response = self._request("POST", endpoint, data=data)
-        logger.info(f"Published Threads media: {response.get('id')}")
-        return response["id"]
+        import time
+
+        for attempt in range(max_attempts):
+            try:
+                response = self._request("POST", endpoint, data=data)
+                logger.info(f"Published Threads media: {response.get('id')}")
+                return response["id"]
+            except ThreadsAPIError as e:
+                if e.code == 24 and attempt < max_attempts - 1:
+                    logger.warning(
+                        f"Threads publish not ready (Code 24). Retrying... "
+                        f"(attempt {attempt + 1}/{max_attempts})"
+                    )
+                    time.sleep(interval)
+                    continue
+                raise
 
     def check_container_status(self, container_id: str) -> dict:
         """Check the status of a media container."""

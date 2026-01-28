@@ -266,6 +266,9 @@ class Poster:
                     results["threads_success"].append(work.work_name)
                 if post_results.get("x"):
                     results["x_success"].append(work.work_name)
+                if post_results.get("errors"):
+                    for err in post_results["errors"]:
+                        results["errors"].append(f"{work.work_name} ({err})")
 
                 time.sleep(5)  # Global rate limit between works
             except Exception as e:
@@ -338,6 +341,9 @@ class Poster:
                     results["threads_success"].append(work.work_name)
                 if post_results.get("x"):
                     results["x_success"].append(work.work_name)
+                if post_results.get("errors"):
+                    for err in post_results["errors"]:
+                        results["errors"].append(f"{work.work_name} ({err})")
 
                 time.sleep(5)
             except Exception as e:
@@ -348,7 +354,7 @@ class Poster:
 
     def _process_post(self, post: WorkItem, dry_run: bool = False, platforms: list[str] | None = None) -> dict:
         """Process a single post. Returns dict of success status by platform."""
-        status = {"instagram": False, "x": False, "threads": False}
+        status = {"instagram": False, "x": False, "threads": False, "errors": []}
 
         if platforms is None:
             platforms = ["instagram", "threads", "x"]  # Default to all
@@ -404,6 +410,7 @@ class Poster:
                 except InstagramAPIError as e:
                     logger.error(f"Instagram error: {e}")
                     self.notion.update_post_status(post.page_id, error_log=f"Instagram: {e}")
+                    status["errors"].append(f"Instagram: {e}")
                     # status["instagram"] stays False
 
         # Post to X (if not already posted AND platform is requested)
@@ -425,6 +432,7 @@ class Poster:
                 except XAPIError as e:
                     logger.error(f"X error: {e}")
                     self.notion.update_post_status(post.page_id, error_log=f"X: {e}")
+                    status["errors"].append(f"X: {e}")
 
         # Post to Threads (if not already posted AND platform is requested)
         if "threads" in platforms and hasattr(post, 'threads_posted') and not post.threads_posted:
@@ -445,6 +453,7 @@ class Poster:
                 except ThreadsAPIError as e:
                     logger.error(f"Threads error: {e}")
                     self.notion.update_post_status(post.page_id, error_log=f"Threads: {e}")
+                    status["errors"].append(f"Threads: {e}")
 
         return status
 
