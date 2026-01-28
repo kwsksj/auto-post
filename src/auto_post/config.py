@@ -131,7 +131,7 @@ class Config:
             notion=NotionConfig.from_env(),
             threads=ThreadsConfig.from_env(),
             default_tags=os.environ.get("DEFAULT_TAGS")
-            or "木彫り教室生徒作品 studentwork 木彫り woodcarving 彫刻 handcarved woodart ハンドメイド",
+            or "木彫り教室生徒作品 studentwork 木彫り woodcarving",
         )
 
 
