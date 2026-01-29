@@ -1,5 +1,7 @@
 """Tests for poster module."""
 
+from datetime import datetime
+
 import pytest
 
 from auto_post.poster import generate_caption
@@ -27,7 +29,7 @@ class TestGenerateCaption:
             default_tags="#tag1 #tag2",
         )
         # Implementation appends custom caption and includes default tags
-        expected = "ふくろう の木彫りです！\nカスタムキャプション\n\n#tag1 #tag2\n\n#custom"
+        expected = "ふくろう の木彫りです！\nカスタムキャプション\n\n#tag1 #tag2\n#custom"
         assert result == expected
 
     def test_with_custom_tags(self):
@@ -39,7 +41,7 @@ class TestGenerateCaption:
             default_tags="#tag1 #tag2",
         )
         # Default tags come first
-        assert result == "ねこ の木彫りです！\n\n#tag1 #tag2\n\n#猫 #cat"
+        assert result == "ねこ の木彫りです！\n\n#tag1 #tag2\n#猫 #cat"
 
     def test_empty_work_name(self):
         """Test with empty work name returns only tags."""
@@ -59,7 +61,7 @@ class TestGenerateCaption:
             tags="  #dog  ",
             default_tags="#tag1",
         )
-        assert result == "いぬ の木彫りです！\n\n#tag1\n\n#dog"
+        assert result == "いぬ の木彫りです！\n\n#tag1\n#dog"
 
     def test_none_values(self):
         """Test with None values."""
@@ -70,3 +72,15 @@ class TestGenerateCaption:
             default_tags="#default",
         )
         assert result == "くま の木彫りです！\n\n#default"
+
+    def test_creation_date_no_blank_line_before_tags(self):
+        """Test completion date is followed directly by tags."""
+        result = generate_caption(
+            work_name="はと",
+            custom_caption=None,
+            tags="#class",
+            default_tags="#default",
+            creation_date=datetime(2024, 1, 2),
+        )
+        expected = "はと の木彫りです！\n\n完成日: 2024年01月02日\n#default\n#class"
+        assert result == expected

@@ -148,12 +148,11 @@ auto-post import-groups output.json
 | 教室            | Select                | 教室名                           |
 | 完成日          | Date                  | 作品完成日（キャプションに表示） |
 | 投稿予定日      | Date                  | 優先投稿日                       |
-| 投稿日          | Date                  | 実際の投稿日 (廃止予定)          |
-| Instagram投稿日時 | Date                  | Instagram投稿日時                |
-| X投稿日時         | Date                  | X投稿日時                        |
-| Threads投稿日時   | Date                  | Threads投稿日時                  |
+| Instagram投稿日時 | Date                  | Instagram投稿日時（JST）         |
+| X投稿日時         | Date                  | X投稿日時（JST）                 |
+| Threads投稿日時   | Date                  | Threads投稿日時（JST）           |
 | キャプション    | Rich Text             | カスタムキャプション             |
-| タグ            | Relation/Multi-select | ハッシュタグ                     |
+| タグ            | Relation/Multi-select | 分類用タグ（投稿には使用しない） |
 | Instagram投稿ID | Rich Text             | 投稿後に自動記録                 |
 | X投稿ID         | Rich Text             | 投稿後に自動記録                 |
 | Threads投稿ID   | Rich Text             | 投稿後に自動記録                 |
@@ -194,10 +193,8 @@ auto-post import-groups output.json
 {作品名} の木彫りです！
 {キャプション}
 完成日: {YYYY年MM月DD日}
-
 {デフォルトタグ}
-
-{カスタムタグ}
+#{教室名}
 ```
 
 ---

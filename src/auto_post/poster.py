@@ -4,6 +4,7 @@ import logging
 import os
 import time
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Callable
 
 import requests
@@ -48,6 +49,12 @@ def _env_float(name: str, default: float) -> float:
 POST_RETRY_MAX_ATTEMPTS = max(1, _env_int("POST_RETRY_MAX_ATTEMPTS", 3))
 POST_RETRY_BASE_DELAY_SECONDS = max(0, _env_int("POST_RETRY_BASE_DELAY_SECONDS", 5))
 POST_RETRY_BACKOFF_FACTOR = max(1.0, _env_float("POST_RETRY_BACKOFF_FACTOR", 2.0))
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _now_jst() -> datetime:
+    """Return current time in Japan Standard Time."""
+    return datetime.now(tz=JST)
 
 
 def generate_caption(
@@ -108,13 +115,14 @@ def generate_caption(
 
     if default_tags_str:
         if combined_tags_str:
-            # Default Tags FIRST, then Custom Tags
-            combined_tags_str = f"{default_tags_str}\n\n{combined_tags_str}"
+            # Default Tags FIRST, then Custom Tags (separate line)
+            combined_tags_str = f"{default_tags_str}\n{combined_tags_str}"
         else:
             combined_tags_str = default_tags_str
 
     if caption:
-        return f"{caption}\n\n{combined_tags_str}"
+        separator = "\n" if creation_date else "\n\n"
+        return f"{caption}{separator}{combined_tags_str}"
     return combined_tags_str
 
 
@@ -416,7 +424,7 @@ class Poster:
         caption = generate_caption(
             post.work_name,
             post.caption,
-            post.tags,
+            post.classroom,
             self.config.default_tags,
             creation_date=post.creation_date,
         )
@@ -455,7 +463,7 @@ class Poster:
                         post.page_id,
                         ig_posted=True,
                         ig_post_id=ig_post_id,
-                        posted_date=datetime.now()
+                        posted_date=_now_jst()
                     )
                     status["instagram"] = True
                     logger.info(f"Instagram posted: {ig_post_id}")
@@ -481,7 +489,7 @@ class Poster:
                         post.page_id,
                         x_posted=True,
                         x_post_id=x_post_id,
-                        posted_date=datetime.now()
+                        posted_date=_now_jst()
                     )
                     status["x"] = True
                     logger.info(f"X posted: {x_post_id}")
@@ -506,7 +514,7 @@ class Poster:
                         post.page_id,
                         threads_posted=True,
                         threads_post_id=threads_post_id,
-                        posted_date=datetime.now()
+                        posted_date=_now_jst()
                     )
                     status["threads"] = True
                     logger.info(f"Threads posted: {threads_post_id}")
@@ -621,7 +629,7 @@ class Poster:
         caption = generate_caption(
             work.work_name,
             work.caption,
-            work.tags,
+            work.classroom,
             self.config.default_tags,
             creation_date=work.creation_date,
         )

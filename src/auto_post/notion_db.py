@@ -3,6 +3,7 @@
 import logging
 from dataclasses import dataclass
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from notion_client import Client
 
@@ -16,6 +17,7 @@ class WorkItem:
     page_id: str
     work_name: str
     student_name: str | None
+    classroom: str | None
     image_urls: list[str]
     creation_date: datetime | None
     scheduled_date: datetime | None
@@ -300,15 +302,10 @@ class NotionDB:
                     names = [self._fetch_page_title(rid) for rid in relation_ids[:5]]
                     tags = " ".join(filter(None, names))
 
-        # Extract classroom (教室) and append to tags if present
+        # Extract classroom (教室)
         classroom = None
         if props.get("教室", {}).get("select"):
             classroom = props["教室"]["select"]["name"]
-            if classroom:
-                if tags:
-                    tags += f" {classroom}"
-                else:
-                    tags = classroom
 
         ig_post_id = self._get_rich_text(props, "Instagram投稿ID")
         x_post_id = self._get_rich_text(props, "X投稿ID")
@@ -320,6 +317,7 @@ class NotionDB:
             page_id=page["id"],
             work_name=work_name,
             student_name=student_name,
+            classroom=classroom,
             image_urls=image_urls,
             creation_date=creation_date,
             scheduled_date=scheduled_date,
@@ -380,6 +378,11 @@ class NotionDB:
             properties["Threads投稿ID"] = {"rich_text": [{"text": {"content": threads_post_id}}]}
 
         if posted_date:
+            jst = ZoneInfo("Asia/Tokyo")
+            if posted_date.tzinfo is None:
+                posted_date = posted_date.replace(tzinfo=jst)
+            else:
+                posted_date = posted_date.astimezone(jst)
             # Platform specific timestamps (including time)
             if ig_posted and self._is_property_valid("Instagram投稿日時"):
                 properties["Instagram投稿日時"] = {"date": {"start": posted_date.isoformat()}}
