@@ -39,16 +39,26 @@ class R2Storage:
             ),
         )
 
-    def upload(self, content: bytes, key: str, content_type: str) -> str:
+    def upload(
+        self,
+        content: bytes,
+        key: str,
+        content_type: str,
+        cache_control: str | None = None,
+    ) -> str:
         """Upload content to R2 and return the key."""
         # Create fresh client for every request to avoid session issues
         client = self._create_client()
+
+        extra_args = {"ContentType": content_type}
+        if cache_control:
+            extra_args["CacheControl"] = cache_control
 
         client.upload_fileobj(
             io.BytesIO(content),
             self.config.bucket_name,
             key,
-            ExtraArgs={"ContentType": content_type},
+            ExtraArgs=extra_args,
         )
         logger.info(f"Uploaded to R2: {key}")
         return key
@@ -91,11 +101,18 @@ class R2Storage:
             except Exception as e:
                 logger.warning(f"Failed to delete temporary file {key}: {e}")
 
-    def put_json(self, data: dict, key: str):
+    def put_json(
+        self,
+        data: dict,
+        key: str,
+        cache_control: str | None = None,
+        ensure_ascii: bool = True,
+    ):
         """Save a dictionary as JSON to R2."""
         import json
         logger.info(f"Saving JSON to R2: {key}")
-        self.upload(json.dumps(data).encode("utf-8"), key, "application/json")
+        payload = json.dumps(data, ensure_ascii=ensure_ascii).encode("utf-8")
+        self.upload(payload, key, "application/json", cache_control=cache_control)
 
     def get_json(self, key: str) -> dict | None:
         """Retrieve a dictionary from JSON in R2. Returns None if not found."""
@@ -116,3 +133,17 @@ class R2Storage:
         except Exception as e:
             logger.error(f"Failed to read JSON {key}: {e}")
             return None
+
+    def exists(self, key: str) -> bool:
+        """Check if an object exists in R2."""
+        from botocore.exceptions import ClientError
+
+        try:
+            client = self._create_client()
+            client.head_object(Bucket=self.config.bucket_name, Key=key)
+            return True
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code")
+            if code in {"404", "NoSuchKey", "NotFound"}:
+                return False
+            raise

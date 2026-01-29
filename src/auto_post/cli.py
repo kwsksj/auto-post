@@ -233,6 +233,49 @@ def list_works(ctx, student: str | None, unposted: bool):
 
 
 @main.command()
+@click.option(
+    "--output",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Write gallery.json to a local file",
+)
+@click.option("--no-upload", is_flag=True, help="Skip uploading gallery.json to R2")
+@click.option("--no-thumbs", is_flag=True, help="Skip generating thumbnails")
+@click.option("--thumb-width", default=600, show_default=True, help="Thumbnail width in px")
+@click.pass_context
+def export_gallery_json(
+    ctx,
+    output: Path | None,
+    no_upload: bool,
+    no_thumbs: bool,
+    thumb_width: int,
+):
+    """Export gallery.json from Notion and upload to R2."""
+    config = Config.load(ctx.obj.get("env_file"))
+    from .gallery_exporter import GalleryExporter
+
+    exporter = GalleryExporter(config)
+    _, stats = exporter.export(
+        output_path=output,
+        upload=not no_upload,
+        generate_thumbs=not no_thumbs,
+        thumb_width=thumb_width,
+    )
+
+    click.echo("\n" + "=" * 30)
+    click.echo("Gallery Export Summary")
+    click.echo("=" * 30)
+    click.echo(f"Total pages: {stats.total_pages}")
+    click.echo(f"Exported:    {stats.exported}")
+    click.echo(f"Skip (no images): {stats.skipped_no_images}")
+    click.echo(f"Skip (no completed_date): {stats.skipped_no_completed_date}")
+    if not no_thumbs:
+        click.echo(f"Thumbs generated: {stats.thumb_generated}")
+        click.echo(f"Thumbs existing:  {stats.thumb_skipped_existing}")
+        click.echo(f"Thumbs failed:    {stats.thumb_failed}")
+    click.echo("=" * 30)
+
+
+@main.command()
 @click.pass_context
 def check_notion(ctx):
     """Check Notion database connection and schema."""

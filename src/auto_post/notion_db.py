@@ -40,69 +40,117 @@ class NotionDB:
         self.database_id = database_id
         self.tags_database_id = tags_database_id
         self.known_properties = None
+        self._property_schema = None
+        self._schema_fetch_failed = False
+
+    def _ensure_schema(self) -> None:
+        if self._property_schema is None:
+            try:
+                db = self.get_database_info()
+                self._property_schema = db.get("properties", {})
+                self.known_properties = set(self._property_schema.keys())
+                self._schema_fetch_failed = False
+            except Exception as e:
+                logger.warning(f"Failed to fetch database schema: {e}")
+                self._property_schema = None
+                self.known_properties = None
+                self._schema_fetch_failed = True
 
     def _is_property_valid(self, prop_name: str) -> bool:
         """Check if a property exists in the database schema."""
         if self.known_properties is None:
-            try:
-                db = self.get_database_info()
-                self.known_properties = set(db["properties"].keys())
-            except Exception as e:
-                logger.warning(f"Failed to fetch database schema: {e}")
-                return True # Assume valid if check fails to avoid blocking
-
+            self._ensure_schema()
+            if self.known_properties is None or self._schema_fetch_failed:
+                return True  # Assume valid if check fails to avoid blocking
         return prop_name in self.known_properties
+
+    def _get_property_schema(self, prop_name: str) -> dict | None:
+        self._ensure_schema()
+        if self._schema_fetch_failed or not self._property_schema:
+            return None
+        return self._property_schema.get(prop_name)
+
+    def _get_property_type(self, prop_name: str) -> str | None:
+        schema = self._get_property_schema(prop_name)
+        return schema.get("type") if schema else None
+
+    def _get_relation_database_id(self, prop_name: str) -> str | None:
+        schema = self._get_property_schema(prop_name)
+        if schema and schema.get("type") == "relation":
+            return schema.get("relation", {}).get("database_id")
+        return None
+
+    def _get_or_create_page_by_title(self, database_id: str, title: str) -> str | None:
+        """Find or create a page in a database by its title property."""
+        try:
+            existing = self._find_page_id_by_title(database_id, title)
+            if existing:
+                return existing
+
+            # Create new page
+            db = self.client.databases.retrieve(database_id)
+            title_prop = self.get_title_property_name(db)
+            if not title_prop:
+                logger.warning("No title property for database %s", database_id)
+                return None
+            create_resp = self.client.pages.create(
+                parent={"database_id": database_id},
+                properties={
+                    title_prop: {"title": [{"text": {"content": title}}]},
+                },
+            )
+            return create_resp["id"]
+        except Exception as e:
+            logger.warning("Failed to get/create page '%s' in %s: %s", title, database_id, e)
+            return None
+
+    def _find_page_id_by_title(self, database_id: str, title: str) -> str | None:
+        """Find a page in a database by its title property."""
+        try:
+            db = self.client.databases.retrieve(database_id)
+            title_prop = self.get_title_property_name(db)
+            if not title_prop:
+                return None
+            response = self.client.request(
+                path=f"databases/{database_id}/query",
+                method="POST",
+                body={
+                    "filter": {
+                        "property": title_prop,
+                        "title": {"equals": title},
+                    }
+                },
+            )
+            if response.get("results"):
+                return response["results"][0]["id"]
+            return None
+        except Exception as e:
+            logger.warning("Failed to find page '%s' in %s: %s", title, database_id, e)
+            return None
+
+    def _set_relation_or_select(self, properties: dict, prop_name: str, value: str) -> None:
+        """Set a property as relation or select depending on schema."""
+        prop_type = self._get_property_type(prop_name)
+        if prop_type == "relation":
+            relation_db_id = self._get_relation_database_id(prop_name)
+            if relation_db_id:
+                page_id = self._get_or_create_page_by_title(relation_db_id, value)
+                if page_id:
+                    properties[prop_name] = {"relation": [{"id": page_id}]}
+                else:
+                    logger.warning("Failed to resolve relation page for %s: %s", prop_name, value)
+            else:
+                logger.warning("Relation database id not found for %s", prop_name)
+        elif prop_type in {"select", None}:
+            properties[prop_name] = {"select": {"name": value}}
+        else:
+            logger.warning("Unsupported property type for %s: %s", prop_name, prop_type)
 
     def _get_or_create_tag_page(self, tag_name: str) -> str | None:
         """Find or create a page in the Keywords database."""
         if not self.tags_database_id:
             return None
-
-        # Search for existing tag
-        response = self.client.request(
-            path=f"databases/{self.tags_database_id}/query",
-            method="POST",
-            body={
-                "filter": {
-                    "property": "名前", # Assumes default title property is "名前" or "Name" - usually "Name" or "名前" in JP
-                    "title": {"equals": tag_name}
-                }
-            }
-        )
-
-        if response["results"]:
-            return response["results"][0]["id"]
-
-        # Create new tag
-        # Note: Title property name varies. Try "名前" first, fallback if it fails?
-        # Actually standard new DB has "Name" or "名前". Let's try standard "名前" since user created as "キーワード"
-        # We can inspect schema, but for now Assume "名前". If user manually created, title is usually "名前" in JP locale or "Name".
-        # Safe bet: retrieve DB schema first? Or just try "Name" then "名前"?
-        # Let's inspect DB schema in __init__ if needed, but for now try to be generic or catch error.
-
-        # We'll use a helper to get title property name
-        try:
-            prop_name = "名前" # User likely has Japanese UI
-            create_resp = self.client.pages.create(
-                parent={"database_id": self.tags_database_id},
-                properties={
-                    prop_name: {"title": [{"text": {"content": tag_name}}]}
-                }
-            )
-            return create_resp["id"]
-        except Exception as e:
-            logger.warning(f"Failed to create tag '{tag_name}' with prop '名前': {e}. Trying 'Name'.")
-            try:
-                create_resp = self.client.pages.create(
-                    parent={"database_id": self.tags_database_id},
-                    properties={
-                        "Name": {"title": [{"text": {"content": tag_name}}]}
-                    }
-                )
-                return create_resp["id"]
-            except Exception as e2:
-                logger.error(f"Failed to create tag '{tag_name}': {e2}")
-                return None
+        return self._get_or_create_page_by_title(self.tags_database_id, tag_name)
 
 
 
@@ -127,9 +175,9 @@ class NotionDB:
 
         if student_name:
             if self._is_property_valid("作者"):
-                properties["作者"] = {"select": {"name": student_name}}
+                self._set_relation_or_select(properties, "作者", student_name)
             elif self._is_property_valid("生徒名"):
-                properties["生徒名"] = {"select": {"name": student_name}}
+                self._set_relation_or_select(properties, "生徒名", student_name)
         if scheduled_date and self._is_property_valid("投稿予定日"):
             properties["投稿予定日"] = {"date": {"start": scheduled_date.strftime("%Y-%m-%d")}}
         if creation_date and self._is_property_valid("完成日"):
@@ -247,12 +295,20 @@ class NotionDB:
         if props.get("作品名", {}).get("title"):
             work_name = props["作品名"]["title"][0]["plain_text"] if props["作品名"]["title"] else ""
 
-        # Extract select (生徒名 / 作者)
+        # Extract select / relation (生徒名 / 作者)
         student_name = None
         if props.get("生徒名", {}).get("select"):
             student_name = props["生徒名"]["select"]["name"]
-        elif props.get("作者", {}).get("select"):
-            student_name = props["作者"]["select"]["name"]
+        elif props.get("作者"):
+            a_prop = props["作者"]
+            if a_prop.get("type") == "select" and a_prop.get("select"):
+                student_name = a_prop["select"]["name"]
+            elif a_prop.get("type") == "relation":
+                relation_ids = [r["id"] for r in a_prop.get("relation", []) if r.get("id")]
+                if relation_ids:
+                    names = [self._fetch_page_title(rid) for rid in relation_ids]
+                    joined = " / ".join(filter(None, names))
+                    student_name = joined if joined else None
 
         # Extract files (画像)
         image_urls = []
@@ -416,7 +472,19 @@ class NotionDB:
             # But filter must target existing property.
             # We assume '作者' based on recent schema check.
             prop_name = "作者" if self._is_property_valid("作者") else "生徒名"
-            filters.append({"property": prop_name, "select": {"equals": filter_student}})
+            prop_type = self._get_property_type(prop_name)
+            if prop_type == "relation":
+                relation_db_id = self._get_relation_database_id(prop_name)
+                if relation_db_id:
+                    page_id = self._find_page_id_by_title(relation_db_id, filter_student)
+                    if page_id:
+                        filters.append({"property": prop_name, "relation": {"contains": page_id}})
+                    else:
+                        return []
+                else:
+                    return []
+            else:
+                filters.append({"property": prop_name, "select": {"equals": filter_student}})
 
         if only_unposted:
             filters.append({
@@ -441,6 +509,54 @@ class NotionDB:
     def get_database_info(self) -> dict:
         """Get database schema information."""
         return self.client.databases.retrieve(self.database_id)
+
+    def list_database_pages(self, database_id: str) -> list[dict]:
+        """List all pages in a Notion database with pagination."""
+        pages = []
+        start_cursor = None
+        while True:
+            body = {}
+            if start_cursor:
+                body["start_cursor"] = start_cursor
+            response = self.client.request(
+                path=f"databases/{database_id}/query",
+                method="POST",
+                body=body,
+            )
+            pages.extend(response.get("results", []))
+            if response.get("has_more"):
+                start_cursor = response.get("next_cursor")
+            else:
+                break
+        return pages
+
+    def get_title_property_name(self, database_info: dict) -> str | None:
+        """Get the title property name from a database schema."""
+        for prop_name, prop in database_info.get("properties", {}).items():
+            if prop.get("type") == "title":
+                return prop_name
+        return None
+
+    def get_database_title_map(self, database_id: str) -> dict[str, str]:
+        """Build a map of page_id -> title for a given database."""
+        db_info = self.client.databases.retrieve(database_id)
+        title_prop = self.get_title_property_name(db_info)
+        if not title_prop:
+            logger.warning("No title property found for database %s", database_id)
+            return {}
+
+        pages = self.list_database_pages(database_id)
+        title_map: dict[str, str] = {}
+        for page in pages:
+            props = page.get("properties", {})
+            t_prop = props.get(title_prop, {})
+            if t_prop.get("type") == "title" and t_prop.get("title"):
+                title_map[page["id"]] = "".join(
+                    t.get("plain_text", "") for t in t_prop["title"]
+                ).strip()
+            else:
+                title_map[page["id"]] = ""
+        return title_map
 
     def get_unscheduled_works(self, limit: int = 1, platforms: list[str] | None = None) -> list[WorkItem]:
         """
