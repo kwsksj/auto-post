@@ -17,7 +17,16 @@ class InstagramConfig:
     business_account_id: str
 
     @classmethod
-    def from_env(cls) -> "InstagramConfig":
+    def from_env(cls, allow_missing: bool = False) -> "InstagramConfig":
+        if allow_missing:
+            return cls(
+                app_id=os.environ.get("INSTAGRAM_APP_ID", ""),
+                app_secret=os.environ.get("INSTAGRAM_APP_SECRET", ""),
+                access_token=os.environ.get("INSTAGRAM_ACCESS_TOKEN", ""),
+                business_account_id=os.environ.get(
+                    "INSTAGRAM_BUSINESS_ACCOUNT_ID", "17841422021372550"
+                ),
+            )
         return cls(
             app_id=os.environ["INSTAGRAM_APP_ID"],
             app_secret=os.environ["INSTAGRAM_APP_SECRET"],
@@ -117,7 +126,11 @@ class Config:
     default_tags: str
 
     @classmethod
-    def load(cls, env_file: Path | None = None) -> "Config":
+    def load(
+        cls,
+        env_file: Path | None = None,
+        allow_missing_instagram: bool = False,
+    ) -> "Config":
         """Load configuration from environment variables."""
         if env_file:
             load_dotenv(env_file, override=True)
@@ -125,7 +138,7 @@ class Config:
             load_dotenv(override=True)
 
         return cls(
-            instagram=InstagramConfig.from_env(),
+            instagram=InstagramConfig.from_env(allow_missing=allow_missing_instagram),
             x=XConfig.from_env(),
             r2=R2Config.from_env(),
             notion=NotionConfig.from_env(),

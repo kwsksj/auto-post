@@ -250,7 +250,7 @@ def export_gallery_json(
     thumb_width: int,
 ):
     """Export gallery.json from Notion and upload to R2."""
-    config = Config.load(ctx.obj.get("env_file"))
+    config = Config.load(ctx.obj.get("env_file"), allow_missing_instagram=True)
     from .gallery_exporter import GalleryExporter
 
     exporter = GalleryExporter(config)
