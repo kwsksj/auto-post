@@ -46,8 +46,10 @@ def main(ctx, env_file: Path | None, debug: bool):
     default="all",
     help="Platform to post to (default: all). When specified, only items unposted to that platform are selected."
 )
+@click.option("--basic-limit", "-b", default=2, help="Number of basic posts per platform (default: 2)")
+@click.option("--catchup-limit", "-c", default=1, help="Number of catch-up posts per platform (default: 1)")
 @click.pass_context
-def post(ctx, date: datetime | None, dry_run: bool, platform: str):
+def post(ctx, date: datetime | None, dry_run: bool, platform: str, basic_limit: int, catchup_limit: int):
     """Run the daily posting job."""
     config = Config.load(ctx.obj.get("env_file"))
     poster = Poster(config)
@@ -60,7 +62,13 @@ def post(ctx, date: datetime | None, dry_run: bool, platform: str):
     else:
         platforms = [platform]
 
-    stats = poster.run_daily_post(target_date, dry_run=dry_run, platforms=platforms)
+    stats = poster.run_daily_post(
+        target_date,
+        dry_run=dry_run,
+        platforms=platforms,
+        basic_limit=basic_limit,
+        catchup_limit=catchup_limit,
+    )
 
     click.echo("\n" + "=" * 30)
     click.echo("Daily Post Summary")

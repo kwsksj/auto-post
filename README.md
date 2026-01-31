@@ -70,6 +70,9 @@ auto-post post --platform instagram
 auto-post post --platform threads
 auto-post post --platform x
 
+# 投稿件数を指定
+auto-post post --basic-limit 3 --catchup-limit 2
+
 # ドライラン（テスト）
 auto-post post --dry-run
 ```
@@ -79,8 +82,10 @@ auto-post post --dry-run
 ```bash
 # 他SNSで投稿済み＆当該SNS未投稿の作品を投稿
 auto-post catchup
-auto-post catchup --platform x --count 3
+auto-post catchup --platform x --limit 3
 ```
+
+> GitHub Actions の `Catch-up Post` ワークフローからも実行可能です。
 
 ### ギャラリー更新（gallery.json / thumbs）
 
@@ -92,7 +97,7 @@ auto-post export-gallery-json
 auto-post export-gallery-json --no-thumbs
 ```
 
-> GitHub Actions で自動実行する場合は、`.github/workflows/gallery-export.yml` を有効化し、  
+> GitHub Actions で自動実行する場合は、`.github/workflows/gallery-export.yml` を有効化し、
 > Secrets に `NOTION_TOKEN`, `NOTION_DATABASE_ID`, `R2_*`, `R2_PUBLIC_URL` を設定してください。
 
 ### 確認・デバッグ
@@ -121,8 +126,11 @@ auto-post import-folders <folder>
 各プラットフォームごとに以下の優先順位で投稿:
 
 1. **投稿日指定** - `投稿予定日 = 今日` の作品（無制限）
-2. **キャッチアップ** - 他SNS投稿済み＆当該SNS未投稿（1件/日）
-3. **基本投稿** - 未投稿作品を完成日順（3件/日）
+2. **キャッチアップ** - 他SNS投稿済み＆当該SNS未投稿（デフォルト: 1件/日）
+3. **基本投稿** - 未投稿作品を完成日順（デフォルト: 2件/日）
+
+> 件数は `--basic-limit` / `--catchup-limit` オプションで変更可能。
+> GitHub Actions の workflow_dispatch からも設定できます。
 
 ## ドキュメント
 

@@ -201,14 +201,28 @@ class Poster:
                 )
                 time.sleep(wait_seconds)
 
-    def run_daily_post(self, target_date: datetime | None = None, dry_run: bool = False, platforms: list[str] | None = None) -> dict:
+    def run_daily_post(
+        self,
+        target_date: datetime | None = None,
+        dry_run: bool = False,
+        platforms: list[str] | None = None,
+        basic_limit: int = 2,
+        catchup_limit: int = 1,
+    ) -> dict:
         """
         Run the daily posting job.
 
         Selection Order (Per Platform):
         1. Date Designated (投稿予定日 = target_date)
-        2. Catch-up (Posted on other platforms but not target) - Limit 1
-        3. Basic (Oldest unposted) - Limit 3
+        2. Catch-up (Posted on other platforms but not target) - Limit catchup_limit
+        3. Basic (Oldest unposted) - Limit basic_limit
+
+        Args:
+            target_date: Target date for posting (default: today)
+            dry_run: If True, preview without posting
+            platforms: List of platforms to post to
+            basic_limit: Max number of basic posts per platform (default: 2)
+            catchup_limit: Max number of catch-up posts per platform (default: 1)
 
         Returns:
             dict with 'processed', 'ig_success', 'x_success', 'errors' counts
@@ -263,7 +277,7 @@ class Poster:
                 platform_queues[p].append(work.page_id)
                 unique_works[work.page_id] = work
                 added_count += 1
-                if added_count >= 1:
+                if added_count >= catchup_limit:
                     break
 
             if added_count > 0:
@@ -280,7 +294,7 @@ class Poster:
                 platform_queues[p].append(work.page_id)
                 unique_works[work.page_id] = work
                 added_count += 1
-                if added_count >= 3:
+                if added_count >= basic_limit:
                     break
 
             if added_count > 0:
