@@ -6,7 +6,8 @@ import io
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from urllib.parse import urlparse
 
 import requests
 from PIL import Image, ImageOps
@@ -21,6 +22,9 @@ THUMB_WIDTH_DEFAULT = 600
 THUMB_RATIO = 4 / 5
 GALLERY_JSON_KEY = "gallery.json"
 THUMB_PREFIX = "thumbs"
+LIGHT_MAX_SIZE_DEFAULT = 1600
+LIGHT_QUALITY_DEFAULT = 75
+LIGHT_PREFIX_SUFFIX = "-light"
 
 
 @dataclass
@@ -32,6 +36,9 @@ class ExportStats:
     thumb_generated: int = 0
     thumb_skipped_existing: int = 0
     thumb_failed: int = 0
+    light_generated: int = 0
+    light_skipped_existing: int = 0
+    light_failed: int = 0
 
 
 class GalleryExporter:
@@ -55,6 +62,9 @@ class GalleryExporter:
         upload: bool = True,
         generate_thumbs: bool = True,
         thumb_width: int = THUMB_WIDTH_DEFAULT,
+        generate_light_images: bool = True,
+        light_max_size: int = LIGHT_MAX_SIZE_DEFAULT,
+        light_quality: int = LIGHT_QUALITY_DEFAULT,
     ) -> tuple[dict, ExportStats]:
         db_info = self.notion.get_database_info()
         pages = self.notion.list_database_pages(self.notion.database_id)
@@ -77,6 +87,9 @@ class GalleryExporter:
                 author_map=author_map,
                 generate_thumbs=generate_thumbs,
                 thumb_width=thumb_width,
+                generate_light_images=generate_light_images,
+                light_max_size=light_max_size,
+                light_quality=light_quality,
                 stats=stats,
             )
             if work:
@@ -125,6 +138,9 @@ class GalleryExporter:
         author_map: dict[str, str],
         generate_thumbs: bool,
         thumb_width: int,
+        generate_light_images: bool,
+        light_max_size: int,
+        light_quality: int,
         stats: ExportStats,
     ) -> dict | None:
         props = page.get("properties", {})
@@ -166,6 +182,25 @@ class GalleryExporter:
         if not thumb_url:
             thumb_url = images[0]
 
+        images_light: list[str] | None = None
+        if generate_light_images:
+            images_light = []
+            has_light = False
+            for image_url in images:
+                light_url = self._ensure_light_image(
+                    image_url=image_url,
+                    max_size=light_max_size,
+                    quality=light_quality,
+                    stats=stats,
+                )
+                if light_url:
+                    images_light.append(light_url)
+                    has_light = True
+                else:
+                    images_light.append(image_url)
+            if not has_light:
+                images_light = None
+
         work = {
             "id": work_id,
             "title": title or "",
@@ -177,6 +212,8 @@ class GalleryExporter:
             "images": images,
             "thumb": thumb_url,
         }
+        if images_light:
+            work["images_light"] = images_light
         return work
 
     def _format_author(self, author_names: list[str], props: dict) -> str | None:
@@ -283,6 +320,46 @@ class GalleryExporter:
             logger.warning("Thumbnail generation failed (%s): %s", work_id, e)
             return None
 
+    def _ensure_light_image(
+        self,
+        image_url: str,
+        max_size: int,
+        quality: int,
+        stats: ExportStats,
+    ) -> str | None:
+        key = self._build_light_key(image_url)
+        if not key:
+            stats.light_failed += 1
+            logger.warning("Light image key build failed: %s", image_url)
+            return None
+
+        if self.r2.exists(key):
+            stats.light_skipped_existing += 1
+            return self._public_url(key)
+
+        try:
+            resp = requests.get(image_url, timeout=30)
+            resp.raise_for_status()
+            image = Image.open(io.BytesIO(resp.content))
+            image = ImageOps.exif_transpose(image)
+            image = self._convert_to_rgb(image)
+            image = self._resize_to_max(image, max_size)
+
+            buf = io.BytesIO()
+            image.save(buf, format="JPEG", quality=quality)
+            self.r2.upload(
+                buf.getvalue(),
+                key,
+                "image/jpeg",
+                cache_control="max-age=31536000",
+            )
+            stats.light_generated += 1
+            return self._public_url(key)
+        except Exception as e:
+            stats.light_failed += 1
+            logger.warning("Light image generation failed (%s): %s", image_url, e)
+            return None
+
     def _center_crop(self, image: Image.Image, target_ratio: float) -> Image.Image:
         width, height = image.size
         current_ratio = width / height
@@ -295,6 +372,45 @@ class GalleryExporter:
             top = (height - new_height) // 2
             box = (0, top, width, top + new_height)
         return image.crop(box)
+
+    def _resize_to_max(self, image: Image.Image, max_size: int) -> Image.Image:
+        width, height = image.size
+        longest = max(width, height)
+        if longest <= max_size:
+            return image
+        scale = max_size / longest
+        new_width = max(1, int(width * scale))
+        new_height = max(1, int(height * scale))
+        return image.resize((new_width, new_height), Image.LANCZOS)
+
+    def _convert_to_rgb(self, image: Image.Image) -> Image.Image:
+        if image.mode in ("RGBA", "LA") or (
+            image.mode == "P" and "transparency" in image.info
+        ):
+            background = Image.new("RGB", image.size, (255, 255, 255))
+            alpha = image.split()[-1]
+            background.paste(image, mask=alpha)
+            return background
+        return image.convert("RGB")
+
+    def _build_light_key(self, image_url: str) -> str | None:
+        parsed = urlparse(image_url)
+        if not parsed.path:
+            return None
+        parts = [p for p in PurePosixPath(parsed.path).parts if p != "/"]
+        if not parts:
+            return None
+
+        base = parts[0]
+        prefix = base if base.endswith(LIGHT_PREFIX_SUFFIX) else f"{base}{LIGHT_PREFIX_SUFFIX}"
+        filename = parts[-1]
+        stem = Path(filename).stem
+        ext = Path(filename).suffix.lower()
+        out_ext = ext if ext in {".jpg", ".jpeg"} else ".jpg"
+        new_filename = f"{stem}{out_ext}"
+
+        key_parts = [prefix, *parts[1:-1], new_filename]
+        return "/".join([p for p in key_parts if p])
 
     def _public_url(self, key: str) -> str:
         base = (self.config.r2.public_url or "").rstrip("/")

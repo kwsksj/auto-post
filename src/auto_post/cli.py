@@ -249,6 +249,9 @@ def list_works(ctx, student: str | None, unposted: bool):
 @click.option("--no-upload", is_flag=True, help="Skip uploading gallery.json to R2")
 @click.option("--no-thumbs", is_flag=True, help="Skip generating thumbnails")
 @click.option("--thumb-width", default=600, show_default=True, help="Thumbnail width in px")
+@click.option("--no-light", is_flag=True, help="Skip generating light images")
+@click.option("--light-max-size", default=1600, show_default=True, help="Max size for light images in px")
+@click.option("--light-quality", default=75, show_default=True, help="JPEG quality for light images")
 @click.pass_context
 def export_gallery_json(
     ctx,
@@ -256,6 +259,9 @@ def export_gallery_json(
     no_upload: bool,
     no_thumbs: bool,
     thumb_width: int,
+    no_light: bool,
+    light_max_size: int,
+    light_quality: int,
 ):
     """Export gallery.json from Notion and upload to R2."""
     config = Config.load(ctx.obj.get("env_file"), allow_missing_instagram=True)
@@ -267,6 +273,9 @@ def export_gallery_json(
         upload=not no_upload,
         generate_thumbs=not no_thumbs,
         thumb_width=thumb_width,
+        generate_light_images=not no_light,
+        light_max_size=light_max_size,
+        light_quality=light_quality,
     )
 
     click.echo("\n" + "=" * 30)
@@ -280,6 +289,10 @@ def export_gallery_json(
         click.echo(f"Thumbs generated: {stats.thumb_generated}")
         click.echo(f"Thumbs existing:  {stats.thumb_skipped_existing}")
         click.echo(f"Thumbs failed:    {stats.thumb_failed}")
+    if not no_light:
+        click.echo(f"Light generated:  {stats.light_generated}")
+        click.echo(f"Light existing:   {stats.light_skipped_existing}")
+        click.echo(f"Light failed:     {stats.light_failed}")
     click.echo("=" * 30)
 
 

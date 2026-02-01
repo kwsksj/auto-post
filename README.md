@@ -87,14 +87,17 @@ auto-post catchup --platform x --limit 3
 
 > GitHub Actions の `Catch-up Post` ワークフローからも実行可能です。
 
-### ギャラリー更新（gallery.json / thumbs）
+### ギャラリー更新（gallery.json / thumbs / images_light）
 
 ```bash
-# Notionからgallery.jsonとサムネを生成し、R2へアップロード
+# Notionからgallery.jsonとサムネ・軽量画像を生成し、R2へアップロード
 auto-post export-gallery-json
 
 # サムネを作らない場合
 auto-post export-gallery-json --no-thumbs
+
+# 軽量画像を作らない場合
+auto-post export-gallery-json --no-light
 ```
 
 > GitHub Actions で自動実行する場合は、`.github/workflows/gallery-export.yml` を有効化し、
