@@ -117,13 +117,13 @@ auto-post import-groups output.json
 
 ### オプション
 
-| 変数名                          | 説明                             | デフォルト |
-| ------------------------------- | -------------------------------- | ---------- |
-| `R2_PUBLIC_URL`                 | 公開URL                          | なし       |
-| `X_API_KEY`                     | X API Key (Consumer Key)         | なし       |
-| `X_API_KEY_SECRET`              | X API Key Secret                 | なし       |
-| `X_ACCESS_TOKEN`                | X Access Token                   | なし       |
-| `X_ACCESS_TOKEN_SECRET`         | X Access Token Secret            | なし       |
+| 変数名                  | 説明                     | デフォルト |
+| ----------------------- | ------------------------ | ---------- |
+| `R2_PUBLIC_URL`         | 公開URL                  | なし       |
+| `X_API_KEY`             | X API Key (Consumer Key) | なし       |
+| `X_API_KEY_SECRET`      | X API Key Secret         | なし       |
+| `X_ACCESS_TOKEN`        | X Access Token           | なし       |
+| `X_ACCESS_TOKEN_SECRET` | X Access Token Secret    | なし       |
 
 ---
 
@@ -142,21 +142,24 @@ auto-post import-groups output.json
 
 ### オプションプロパティ
 
-| プロパティ名    | タイプ                | 説明                             |
-| --------------- | --------------------- | -------------------------------- |
-| 作者            | Select                | 生徒名                           |
-| 教室            | Select                | 教室名                           |
-| 完成日          | Date                  | 作品完成日（キャプションに表示） |
-| 投稿予定日      | Date                  | 優先投稿日                       |
-| Instagram投稿日時 | Date                  | Instagram投稿日時（JST）         |
-| X投稿日時         | Date                  | X投稿日時（JST）                 |
-| Threads投稿日時   | Date                  | Threads投稿日時（JST）           |
-| キャプション    | Rich Text             | カスタムキャプション             |
-| タグ            | Relation/Multi-select | 分類用タグ（投稿には使用しない） |
-| Instagram投稿ID | Rich Text             | 投稿後に自動記録                 |
-| X投稿ID         | Rich Text             | 投稿後に自動記録                 |
-| Threads投稿ID   | Rich Text             | 投稿後に自動記録                 |
-| エラーログ      | Rich Text             | エラー発生時に記録               |
+| プロパティ名      | タイプ                | 説明                                             |
+| ----------------- | --------------------- | ------------------------------------------------ |
+| 作者              | Relation（生徒DB）    | 生徒（Relation。Select運用は非推奨）             |
+| 教室              | Select                | 教室（正規値。例：東京教室/つくば教室/沼津教室） |
+| 会場              | Select                | 会場（正規値。例：浅草橋/東池袋）                |
+| 完成日            | Date                  | 作品完成日（初期値は写真撮影日）                 |
+| 投稿予定日        | Date                  | 優先投稿日                                       |
+| Instagram投稿日時 | Date                  | Instagram投稿日時（JST）                         |
+| X投稿日時         | Date                  | X投稿日時（JST）                                 |
+| Threads投稿日時   | Date                  | Threads投稿日時（JST）                           |
+| キャプション      | Rich Text             | カスタムキャプション                             |
+| タグ              | Relation/Multi-select | 分類用タグ（投稿には使用しない）                 |
+| Instagram投稿ID   | Rich Text             | 投稿後に自動記録                                 |
+| X投稿ID           | Rich Text             | 投稿後に自動記録                                 |
+| Threads投稿ID     | Rich Text             | 投稿後に自動記録                                 |
+| エラーログ        | Rich Text             | エラー発生時に記録                               |
+
+補足：教室（Select）は `東京教室 / つくば教室 / 沼津教室` のように「〇〇教室」で**正規化**して運用し（予約UIの都合で `東京` のような短縮表記が混在しても保存前に正規化する）、会場（浅草橋など）は `会場`（Select）に分けると、後からデータが濁りません。公開ギャラリー側の `studio` には表示都合で教室名を短縮（末尾の「教室」を除去）して出す前提でOKです。会場は Notion に保持しますが、現状の公開JSON（gallery.json）には含めません（互換性維持）。
 
 ---
 
