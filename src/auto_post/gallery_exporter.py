@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -25,6 +26,8 @@ THUMB_PREFIX = "thumbs"
 LIGHT_MAX_SIZE_DEFAULT = 1600
 LIGHT_QUALITY_DEFAULT = 75
 LIGHT_PREFIX_SUFFIX = "-light"
+AUTHOR_NICKNAME_PROP_CANDIDATES = ("ニックネーム", "nickname", "Nickname")
+AUTHOR_REAL_NAME_PROP_CANDIDATES = ("本名", "real_name", "Real Name")
 
 
 @dataclass
@@ -75,9 +78,7 @@ class GalleryExporter:
         author_db_id = self._get_relation_database_id(db_info, "作者")
 
         tag_map = self.notion.get_database_title_map(tag_db_id) if tag_db_id else {}
-        author_map = (
-            self.notion.get_database_title_map(author_db_id) if author_db_id else {}
-        )
+        author_map = self._build_author_name_map(author_db_id) if author_db_id else {}
 
         stats = ExportStats(total_pages=len(pages))
         works: list[dict] = []
@@ -226,12 +227,86 @@ class GalleryExporter:
 
     def _format_author(self, author_names: list[str], props: dict) -> str | None:
         if author_names:
-            return " / ".join([n for n in author_names if n]) or None
+            nicknames = [self._extract_author_nickname(n) for n in author_names]
+            return " / ".join([n for n in nicknames if n]) or None
         # Fallback if relation is not used
         select_val = self._get_select(props, "作者")
         if select_val:
-            return select_val
+            return self._extract_author_nickname(select_val)
         return None
+
+    def _extract_author_nickname(self, raw_name: str) -> str:
+        text = (raw_name or "").strip()
+        if not text:
+            return ""
+        parts = re.split(r"\s*[|｜]\s*", text, maxsplit=1)
+        nickname = parts[0].strip()
+        real_name = parts[1].strip() if len(parts) > 1 else ""
+        return self._normalize_nickname(nickname, real_name) or real_name
+
+    def _build_author_name_map(self, author_db_id: str) -> dict[str, str]:
+        author_db_info = self.notion.get_database_info(author_db_id)
+        author_title_prop = self.notion.get_title_property_name(author_db_info)
+        nickname_prop = self._pick_property_name(
+            author_db_info,
+            AUTHOR_NICKNAME_PROP_CANDIDATES,
+        )
+        real_name_prop = self._pick_property_name(
+            author_db_info,
+            AUTHOR_REAL_NAME_PROP_CANDIDATES,
+        )
+
+        pages = self.notion.list_database_pages(author_db_id)
+        author_map: dict[str, str] = {}
+        for page in pages:
+            props = page.get("properties", {})
+            title = self._extract_property_text(props.get(author_title_prop, {})) if author_title_prop else ""
+            parsed_nickname, parsed_real_name = self._split_name_label(title)
+            raw_nickname = self._extract_property_text(props.get(nickname_prop, {})) if nickname_prop else ""
+            raw_real_name = self._extract_property_text(props.get(real_name_prop, {})) if real_name_prop else ""
+
+            real_name = raw_real_name or parsed_real_name
+            nickname = self._normalize_nickname(raw_nickname or parsed_nickname, real_name)
+            display_name = nickname or parsed_nickname or real_name or title
+            author_map[page["id"]] = display_name
+
+        return author_map
+
+    def _pick_property_name(self, database_info: dict, candidates: tuple[str, ...]) -> str | None:
+        properties = database_info.get("properties", {})
+        for name in candidates:
+            if name in properties:
+                return name
+        return None
+
+    def _extract_property_text(self, prop: dict) -> str:
+        prop_type = prop.get("type")
+        if prop_type == "title":
+            return "".join(item.get("plain_text", "") for item in prop.get("title", [])).strip()
+        if prop_type == "rich_text":
+            return "".join(item.get("plain_text", "") for item in prop.get("rich_text", [])).strip()
+        if prop_type == "select":
+            return (prop.get("select", {}) or {}).get("name", "").strip()
+        return ""
+
+    def _split_name_label(self, raw_name: str) -> tuple[str, str]:
+        text = (raw_name or "").strip()
+        if not text:
+            return "", ""
+        parts = re.split(r"\s*[|｜]\s*", text, maxsplit=1)
+        nickname = parts[0].strip()
+        real_name = parts[1].strip() if len(parts) > 1 else ""
+        return nickname, real_name
+
+    def _normalize_nickname(self, nickname: str, real_name: str) -> str:
+        nickname = (nickname or "").strip()
+        real_name = (real_name or "").strip()
+        if not nickname:
+            return ""
+        if not real_name or nickname != real_name:
+            return nickname
+        shortened = real_name[:2].strip()
+        return shortened or nickname
 
     def _get_title_from_props(self, props: dict, key: str) -> str:
         if props.get(key, {}).get("title"):
