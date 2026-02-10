@@ -148,27 +148,32 @@ class GalleryExporter:
         properties = db_info.get("properties", {})
         preferred = (os.getenv(READY_PROP_ENV) or READY_PROP_CANDIDATES[0]).strip()
 
-        candidates = []
-        for name in (preferred, *READY_PROP_CANDIDATES):
-            if name and name not in candidates:
-                candidates.append(name)
+        candidates = list(
+            dict.fromkeys(name for name in (preferred, *READY_PROP_CANDIDATES) if name)
+        )
 
         for name in candidates:
             schema = properties.get(name)
-            if schema and schema.get("type") == "checkbox":
+            if self._is_ready_schema_type(schema):
                 return name
 
         for name, schema in properties.items():
-            if schema.get("type") != "checkbox":
+            if not self._is_ready_schema_type(schema):
                 continue
             normalized = str(name or "").strip().lower()
             if "整備済" in normalized or "ready" in normalized:
                 return name
 
         raise ValueError(
-            "Ready checkbox property not found. "
-            "Set NOTION_WORKS_READY_PROP to your ready checkbox property name."
+            "Ready property not found. "
+            "Set NOTION_WORKS_READY_PROP to a checkbox or formula boolean property name."
         )
+
+    def _is_ready_schema_type(self, schema: dict | None) -> bool:
+        if not isinstance(schema, dict):
+            return False
+        # formula type can also represent a derived ready flag
+        return schema.get("type") in {"checkbox", "formula"}
 
     def _is_page_ready(self, page: dict, ready_prop: str) -> bool:
         prop = page.get("properties", {}).get(ready_prop, {})

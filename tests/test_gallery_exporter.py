@@ -174,6 +174,36 @@ def test_resolve_ready_property_name_detects_ready_like_checkbox(monkeypatch):
     assert prop == "公開Ready"
 
 
+def test_resolve_ready_property_name_accepts_formula_from_env(monkeypatch):
+    exporter = _make_exporter()
+    monkeypatch.setenv("NOTION_WORKS_READY_PROP", "公開可判定")
+
+    prop = exporter._resolve_ready_property_name(
+        {
+            "properties": {
+                "公開可判定": {"type": "formula"},
+            }
+        }
+    )
+
+    assert prop == "公開可判定"
+
+
+def test_resolve_ready_property_name_detects_ready_like_formula(monkeypatch):
+    exporter = _make_exporter()
+    monkeypatch.delenv("NOTION_WORKS_READY_PROP", raising=False)
+
+    prop = exporter._resolve_ready_property_name(
+        {
+            "properties": {
+                "ready_formula": {"type": "formula"},
+            }
+        }
+    )
+
+    assert prop == "ready_formula"
+
+
 def test_resolve_ready_property_name_raises_if_not_found(monkeypatch):
     exporter = _make_exporter()
     monkeypatch.delenv("NOTION_WORKS_READY_PROP", raising=False)
