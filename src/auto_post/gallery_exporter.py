@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import logging
 import os
 import re
@@ -24,6 +25,7 @@ THUMB_WIDTH_DEFAULT = 600
 THUMB_RATIO = 4 / 5
 GALLERY_JSON_KEY = "gallery.json"
 THUMB_PREFIX = "thumbs"
+THUMB_HASH_LEN = 12
 LIGHT_MAX_SIZE_DEFAULT = 1600
 LIGHT_QUALITY_DEFAULT = 75
 LIGHT_PREFIX_SUFFIX = "-light"
@@ -446,7 +448,7 @@ class GalleryExporter:
         overwrite: bool,
         stats: ExportStats,
     ) -> str | None:
-        key = f"{THUMB_PREFIX}/{work_id}.jpg"
+        key = self._build_thumbnail_key(work_id, image_url, thumb_width)
         if not overwrite and self.r2.exists(key):
             stats.thumb_skipped_existing += 1
             return self._public_url(key)
@@ -475,6 +477,11 @@ class GalleryExporter:
             stats.thumb_failed += 1
             logger.warning("Thumbnail generation failed (%s): %s", work_id, e)
             return None
+
+    def _build_thumbnail_key(self, work_id: str, image_url: str, thumb_width: int) -> str:
+        material = f"{image_url.strip()}|w={thumb_width}"
+        digest = hashlib.sha1(material.encode("utf-8")).hexdigest()[:THUMB_HASH_LEN]
+        return f"{THUMB_PREFIX}/{work_id}-{digest}.jpg"
 
     def _ensure_light_image(
         self,
