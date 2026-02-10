@@ -1,11 +1,11 @@
 """Photo grouping functionality for Google Takeout imports."""
 
+import glob
 import json
 import logging
 import re
-import glob
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .gps_utils import LocationTag, get_location_for_file, identify_location
@@ -69,10 +69,11 @@ def parse_takeout_metadata(json_path: Path) -> tuple[datetime | None, LocationTa
             timestamp_data = data.get("creationTime")
 
         if timestamp_data and isinstance(timestamp_data, dict):
-             ts_str = timestamp_data.get("timestamp")
-             if ts_str:
-                 # Google Photos JSON timestamps are UTC. Convert to JST (UTC+9)
-                 timestamp = datetime.utcfromtimestamp(int(ts_str)) + timedelta(hours=9)
+            ts_str = timestamp_data.get("timestamp")
+            if ts_str:
+                # Google Photos JSON timestamps are UTC. Convert to JST (UTC+9)
+                utc_dt = datetime.fromtimestamp(int(ts_str), tz=timezone.utc)
+                timestamp = (utc_dt + timedelta(hours=9)).replace(tzinfo=None)
 
         # 2. Parse Location
         location = None
@@ -230,12 +231,11 @@ def scan_photos(folder: Path) -> list[PhotoInfo]:
     for path, info in all_files.items():
         stem = path.stem
 
-        is_original_of_edited = False
         if stem in edited_stems:
-             has_keyword = any(k in stem for k in edited_keywords)
-             if not has_keyword:
-                 logger.info(f"Skipping original {path.name} in favor of edited version")
-                 continue
+            has_keyword = any(k in stem for k in edited_keywords)
+            if not has_keyword:
+                logger.info(f"Skipping original {path.name} in favor of edited version")
+                continue
 
         photos.append(info)
 

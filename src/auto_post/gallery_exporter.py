@@ -26,8 +26,14 @@ THUMB_PREFIX = "thumbs"
 LIGHT_MAX_SIZE_DEFAULT = 1600
 LIGHT_QUALITY_DEFAULT = 75
 LIGHT_PREFIX_SUFFIX = "-light"
-AUTHOR_NICKNAME_PROP_CANDIDATES = ("ニックネーム", "nickname", "Nickname")
-AUTHOR_REAL_NAME_PROP_CANDIDATES = ("本名", "real_name", "Real Name")
+AUTHOR_STUDENT_ID_PROP_CANDIDATES = (
+    "生徒ID",
+    "生徒 Id",
+    "生徒 id",
+    "student_id",
+    "Student ID",
+    "StudentId",
+)
 
 
 @dataclass
@@ -78,7 +84,7 @@ class GalleryExporter:
         author_db_id = self._get_relation_database_id(db_info, "作者")
 
         tag_map = self.notion.get_database_title_map(tag_db_id) if tag_db_id else {}
-        author_map = self._build_author_name_map(author_db_id) if author_db_id else {}
+        author_map = self._build_author_id_map(author_db_id) if author_db_id else {}
 
         stats = ExportStats(total_pages=len(pages))
         works: list[dict] = []
@@ -174,8 +180,8 @@ class GalleryExporter:
         if not tags:
             tags = self._get_tags_fallback(props)
 
-        author = self._get_relation_names(props, "作者", author_map)
-        author_name = self._format_author(author, props)
+        author_ids = self._get_relation_names(props, "作者", author_map)
+        author_name = self._format_author(author_ids, props)
 
         thumb_url = None
         if generate_thumbs:
@@ -225,50 +231,39 @@ class GalleryExporter:
             work["images_light"] = images_light
         return work
 
-    def _format_author(self, author_names: list[str], props: dict) -> str | None:
-        if author_names:
-            nicknames = [self._extract_author_nickname(n) for n in author_names]
-            return " / ".join([n for n in nicknames if n]) or None
-        # Fallback if relation is not used
+    def _format_author(self, author_ids: list[str], props: dict) -> str | None:
+        if author_ids:
+            return " / ".join([author_id for author_id in author_ids if author_id]) or None
+        # Fallback if relation is not used. Only allow ID-like values.
         select_val = self._get_select(props, "作者")
         if select_val:
-            return self._extract_author_nickname(select_val)
+            return self._sanitize_student_id(select_val) or None
         return None
 
-    def _extract_author_nickname(self, raw_name: str) -> str:
-        text = (raw_name or "").strip()
-        if not text:
-            return ""
-        parts = re.split(r"\s*[|｜]\s*", text, maxsplit=1)
-        nickname = parts[0].strip()
-        real_name = parts[1].strip() if len(parts) > 1 else ""
-        return self._normalize_nickname(nickname, real_name) or real_name
-
-    def _build_author_name_map(self, author_db_id: str) -> dict[str, str]:
+    def _build_author_id_map(self, author_db_id: str) -> dict[str, str]:
         author_db_info = self.notion.get_database_info(author_db_id)
-        author_title_prop = self.notion.get_title_property_name(author_db_info)
-        nickname_prop = self._pick_property_name(
+        student_id_prop = self._pick_property_name(
             author_db_info,
-            AUTHOR_NICKNAME_PROP_CANDIDATES,
+            AUTHOR_STUDENT_ID_PROP_CANDIDATES,
         )
-        real_name_prop = self._pick_property_name(
-            author_db_info,
-            AUTHOR_REAL_NAME_PROP_CANDIDATES,
-        )
+        if not student_id_prop:
+            logger.warning(
+                "Student ID property not found in author database %s. expected one of: %s",
+                author_db_id,
+                ", ".join(AUTHOR_STUDENT_ID_PROP_CANDIDATES),
+            )
+            return {}
 
         pages = self.notion.list_database_pages(author_db_id)
         author_map: dict[str, str] = {}
         for page in pages:
             props = page.get("properties", {})
-            title = self._extract_property_text(props.get(author_title_prop, {})) if author_title_prop else ""
-            parsed_nickname, parsed_real_name = self._split_name_label(title)
-            raw_nickname = self._extract_property_text(props.get(nickname_prop, {})) if nickname_prop else ""
-            raw_real_name = self._extract_property_text(props.get(real_name_prop, {})) if real_name_prop else ""
-
-            real_name = raw_real_name or parsed_real_name
-            nickname = self._normalize_nickname(raw_nickname or parsed_nickname, real_name)
-            display_name = nickname or parsed_nickname or real_name or title
-            author_map[page["id"]] = display_name
+            raw_student_id = self._extract_property_text(props.get(student_id_prop, {}))
+            student_id = self._sanitize_student_id(raw_student_id)
+            if not student_id:
+                logger.warning("Missing/invalid student ID on author page: %s", page.get("id"))
+                continue
+            author_map[page["id"]] = student_id
 
         return author_map
 
@@ -287,26 +282,46 @@ class GalleryExporter:
             return "".join(item.get("plain_text", "") for item in prop.get("rich_text", [])).strip()
         if prop_type == "select":
             return (prop.get("select", {}) or {}).get("name", "").strip()
+        if prop_type == "number":
+            return self._stringify_number(prop.get("number"))
+        if prop_type == "unique_id":
+            unique_id = prop.get("unique_id") or {}
+            return self._stringify_unique_id(
+                prefix=unique_id.get("prefix"),
+                number=unique_id.get("number"),
+            )
         return ""
 
-    def _split_name_label(self, raw_name: str) -> tuple[str, str]:
-        text = (raw_name or "").strip()
-        if not text:
-            return "", ""
-        parts = re.split(r"\s*[|｜]\s*", text, maxsplit=1)
-        nickname = parts[0].strip()
-        real_name = parts[1].strip() if len(parts) > 1 else ""
-        return nickname, real_name
-
-    def _normalize_nickname(self, nickname: str, real_name: str) -> str:
-        nickname = (nickname or "").strip()
-        real_name = (real_name or "").strip()
-        if not nickname:
+    def _sanitize_student_id(self, raw_value: str) -> str:
+        value = (raw_value or "").strip()
+        if not value:
             return ""
-        if not real_name or nickname != real_name:
-            return nickname
-        shortened = real_name[:2].strip()
-        return shortened or nickname
+        # Reject values that likely include human names.
+        if re.search(r"\s*[|｜]\s*", value):
+            return ""
+        if re.search(r"[ぁ-んァ-ン一-龥]", value):
+            return ""
+        if not re.search(r"\d", value):
+            return ""
+        return value
+
+    def _stringify_number(self, value: int | float | None) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+        return str(value)
+
+    def _stringify_unique_id(self, prefix: str | None, number: int | float | None) -> str:
+        number_text = self._stringify_number(number)
+        if not number_text:
+            return ""
+        prefix_text = (prefix or "").strip()
+        if not prefix_text:
+            return number_text
+        if prefix_text.endswith("-"):
+            return f"{prefix_text}{number_text}"
+        return f"{prefix_text}-{number_text}"
 
     def _get_title_from_props(self, props: dict, key: str) -> str:
         if props.get(key, {}).get("title"):

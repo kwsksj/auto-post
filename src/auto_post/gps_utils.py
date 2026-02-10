@@ -7,7 +7,7 @@ from math import asin, cos, radians, sin, sqrt
 from pathlib import Path
 
 from PIL import Image
-from PIL.ExifTags import TAGS, GPSTAGS
+from PIL.ExifTags import GPSTAGS, TAGS
 
 logger = logging.getLogger(__name__)
 

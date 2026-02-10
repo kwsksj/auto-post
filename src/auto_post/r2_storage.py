@@ -117,6 +117,7 @@ class R2Storage:
     def get_json(self, key: str) -> dict | None:
         """Retrieve a dictionary from JSON in R2. Returns None if not found."""
         import json
+
         from botocore.exceptions import ClientError
 
         try:

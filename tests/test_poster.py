@@ -2,8 +2,6 @@
 
 from datetime import datetime
 
-import pytest
-
 from auto_post.poster import generate_caption
 
 

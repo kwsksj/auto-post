@@ -2,19 +2,17 @@
 
 import json
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-
-import pytest
 
 from auto_post.grouping import (
     PhotoGroup,
     PhotoInfo,
+    export_grouping,
     group_by_time,
+    import_grouping,
     parse_filename_timestamp,
     parse_takeout_metadata,
-    export_grouping,
-    import_grouping,
 )
 
 
@@ -57,7 +55,10 @@ class TestParseTakeoutMetadata:
             timestamp, location = parse_takeout_metadata(Path(f.name))
             # Note: parse_takeout_metadata converts UTC to JST (+9 hours)
             from datetime import timedelta
-            expected = datetime.utcfromtimestamp(1681560896) + timedelta(hours=9)
+
+            expected = (
+                datetime.fromtimestamp(1681560896, tz=timezone.utc) + timedelta(hours=9)
+            ).replace(tzinfo=None)
             assert timestamp == expected
 
     def test_creation_time_fallback(self):
@@ -70,7 +71,10 @@ class TestParseTakeoutMetadata:
 
             timestamp, location = parse_takeout_metadata(Path(f.name))
             from datetime import timedelta
-            expected = datetime.utcfromtimestamp(1681560896) + timedelta(hours=9)
+
+            expected = (
+                datetime.fromtimestamp(1681560896, tz=timezone.utc) + timedelta(hours=9)
+            ).replace(tzinfo=None)
             assert timestamp == expected
 
     def test_invalid_json(self):
@@ -189,7 +193,6 @@ class TestExportImportGrouping:
 
     def test_export_import_roundtrip(self):
         """Test export then import preserves data."""
-        import os
 
         # Create temporary image files with timestamp-based names
         with tempfile.TemporaryDirectory() as tmpdir:

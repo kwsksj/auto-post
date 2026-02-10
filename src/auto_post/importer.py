@@ -1,8 +1,8 @@
 """Photo import functionality."""
 
+import glob
 import logging
 import mimetypes
-import glob
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -224,7 +224,7 @@ class Importer:
                 stats["errors"] += 1
 
         # Print summary
-        print(f"\\nImport Complete:")
+        print("\\nImport Complete:")
         print(f"  Groups processed: {stats['groups_processed']}")
         print(f"  Photos uploaded: {stats['photos_uploaded']}")
         print(f"  Notion pages created: {stats['notion_pages_created']}")
@@ -325,20 +325,17 @@ class Importer:
                 else:
                     # Move/Copy photo
                     dest_path = target_dir / photo.path.name
-                    processed = False
 
                     if copy:
                         if not dest_path.exists():
                             shutil.copy2(str(photo.path), str(dest_path))
                             stats["processed"] += 1
-                            processed = True
                         elif dest_path.stat().st_size == photo.path.stat().st_size:
-                             processed = True
+                            pass
                     else:
                         if photo.path != dest_path:
                             shutil.move(str(photo.path), str(dest_path))
                             stats["processed"] += 1
-                            processed = True
 
                     # Move JSON sidecars
                     candidate_jsons = list(photo.path.parent.glob(f"{glob.escape(photo.path.name)}*.json"))
@@ -364,8 +361,8 @@ class Importer:
                     # We should probably consolidate or just be aggressive in finding.
 
                     if len(stem) > 40:
-                         truncated_candidates = list(photo.path.parent.glob(f"{glob.escape(stem[:40])}*.json"))
-                         for json_path in truncated_candidates:
+                        truncated_candidates = list(photo.path.parent.glob(f"{glob.escape(stem[:40])}*.json"))
+                        for json_path in truncated_candidates:
                             if stem.startswith(json_path.stem):
                                 if json_path not in candidate_jsons:
                                     candidate_jsons.append(json_path)
@@ -506,7 +503,7 @@ class Importer:
                 logger.warning(f"Page not found for work: {group.work_name}")
                 not_found_count += 1
 
-        print(f"\\nUpdate Complete:")
+        print("\\nUpdate Complete:")
         print(f"  Works updated: {updated_count}")
         print(f"  Skipped (no location): {skipped_count}")
         print(f"  Not matched in Notion: {not_found_count}")

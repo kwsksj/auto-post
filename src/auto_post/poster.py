@@ -4,8 +4,8 @@ import logging
 import os
 import time
 from datetime import datetime
-from zoneinfo import ZoneInfo
 from typing import Callable
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -13,9 +13,9 @@ from .config import Config
 from .instagram import InstagramAPIError, InstagramClient
 from .notion_db import NotionDB, WorkItem
 from .r2_storage import R2Storage
+from .threads import ThreadsAPIError, ThreadsClient
 from .token_manager import TokenManager
 from .x_twitter import XAPIError, XClient
-from .threads import ThreadsClient, ThreadsAPIError
 
 logger = logging.getLogger(__name__)
 

@@ -86,7 +86,7 @@ def post(ctx, date: datetime | None, dry_run: bool, platform: str, basic_limit: 
         click.echo("-" * 30)
         click.echo(f"Errors    ({len(stats['errors'])}): {'; '.join(stats['errors'])}")
     else:
-        click.echo(f"Errors    (0)")
+        click.echo("Errors    (0)")
     click.echo("=" * 30)
 
     if len(stats["errors"]) > 0:
@@ -129,7 +129,7 @@ def catchup(ctx, limit: int, dry_run: bool, platform: str):
         click.echo("-" * 30)
         click.echo(f"Errors    ({len(stats['errors'])}): {'; '.join(stats['errors'])}")
     else:
-        click.echo(f"Errors    (0)")
+        click.echo("Errors    (0)")
     click.echo("=" * 30)
 
     if len(stats["errors"]) > 0:
@@ -445,7 +445,7 @@ def organize(ctx, folder: Path, threshold: int, dry_run: bool, copy: bool, outpu
     stats = importer.organize_folder(folder, threshold_minutes=threshold, dry_run=dry_run, copy=copy, output_folder=output)
 
     if not dry_run:
-        click.echo(f"\nOrganization Complete:")
+        click.echo("\nOrganization Complete:")
         click.echo(f"  Folders created: {stats['folders_created']}")
         click.echo(f"  Photos processed: {stats['processed']}")
 
