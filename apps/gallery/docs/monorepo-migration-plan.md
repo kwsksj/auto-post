@@ -148,6 +148,15 @@ git push origin main
 - 手動 workflow_dispatch 実行が成功
 - admin.html からのアップロードが正常動作
 
+### 現在の進捗（2026-02-13 時点）
+
+- [x] `npx wrangler deploy`（本番デプロイ）成功
+- [x] Daily Gallery Export のスケジュール実行成功
+- [x] Daily Auto Post のスケジュール実行成功
+- [x] `workflow_dispatch` の手動実行成功
+- [x] `admin.html` からのアップロード/更新成功
+- [ ] スケジュール実行 3 回連続成功（残り 2 サイクル）
+
 ### gallery repo のアーカイブ基準
 
 stable period 達成後、1 週間の本番運用を経てアーカイブ。
