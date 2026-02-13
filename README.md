@@ -13,7 +13,7 @@
 - `gallery.json` / サムネ生成とR2反映
 - GitHub Actions の定期実行運用
 
-モノレポ化時は、このリポジトリを canonical（統合先）として運用する方針を推奨します。
+現在、このリポジトリ（`media-platform`）を canonical（統合先）として運用します。
 
 - 統合ノート: `MONOREPO_INTEGRATION.md`
 

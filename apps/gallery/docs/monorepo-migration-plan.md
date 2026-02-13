@@ -6,6 +6,8 @@
 
 - canonical repository: `media-platform` (`<repo-root>`)
 - gallery module: `<repo-root>/apps/gallery`
+- GitHub repository: `kwsksj/media-platform`（rename 済み）
+- local workspace path: `/Users/kawasakiseiji/development/media-platform`
 - split-repo (`gallery`) は legacy 扱い
 
 ## Decision Summary
@@ -33,6 +35,7 @@
 - Daily Auto Post（schedule）成功
 - `workflow_dispatch`（手動実行）成功
 - `admin.html` からのアップロード/更新 成功
+- repo rename 後の `admin.html` ギャラリー更新トリガー成功
 
 ## Current Operation Rule
 

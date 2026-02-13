@@ -2,10 +2,11 @@
 
 ## Current Architecture (as of 2026-02-13)
 
-`auto-post` が canonical repository であり、gallery 関連は `apps/gallery` に集約されています。
+`media-platform` が canonical repository であり、gallery 関連は `apps/gallery` に集約されています。
+（CLI コマンド名は `auto-post` を継続）
 
 ```text
-auto-post/
+media-platform/
   apps/gallery/
   shared/
   docs/
@@ -17,7 +18,7 @@ auto-post/
   - public gallery UI (`gallery.html`)
   - admin upload/curation UI (`admin.html`, `admin/`)
   - worker API for admin + stars (`worker/`, `wrangler.toml`)
-- monorepo root (`auto-post`)
+- monorepo root (`media-platform`)
   - batch/automation tooling: ingest, publish, export
   - scheduled workflows and repository secrets
 

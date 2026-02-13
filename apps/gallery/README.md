@@ -4,7 +4,8 @@ Notion + Cloudflare R2 をソースにしたギャラリーを、Googleサイト
 
 ## Module Scope
 
-このディレクトリは `auto-post` モノレポ内で、以下を担当します。
+このディレクトリは `media-platform` モノレポ内で、以下を担当します。
+（CLIコマンド名は互換性のため `auto-post` のままです）
 
 - 公開ギャラリーUI
 - 先生専用アップロード/整備UI
@@ -18,7 +19,7 @@ Notion + Cloudflare R2 をソースにしたギャラリーを、Googleサイト
 
 - `gallery.html`: ギャラリーUI（単一HTML）
 - `admin.html`: 先生専用アップロード/整備UI（Cloudflare Access 配下想定）
-- `gallery.json`: 作品データ（auto-post で生成、`.gitignore` 済み）
+- `gallery.json`: 作品データ（`auto-post export-gallery-json` で生成、`.gitignore` 済み）
 - `gallery.sample.json`: 共有用のサンプル
 - `worker/src/index.js`: ★ API + 管理API（Cloudflare Workers）
 - `wrangler.toml`: Worker 設定テンプレート
