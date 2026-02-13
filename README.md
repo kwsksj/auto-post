@@ -1,6 +1,8 @@
-# auto-post
+# media-platform
 
 木彫り教室の生徒作品写真を **Instagram / X / Threads** に自動投稿するシステム。
+
+このリポジトリ名は `media-platform` ですが、CLIコマンド名は互換性のため `auto-post` のままです。
 
 ## Repository Scope
 
@@ -27,8 +29,8 @@
 ### 1. リポジトリのクローン
 
 ```bash
-git clone https://github.com/your-repo/auto-post.git
-cd auto-post
+git clone https://github.com/your-repo/media-platform.git
+cd media-platform
 pip install -e .
 ```
 

@@ -39,7 +39,7 @@ function printHelp() {
 	console.log(`Build students_index.json and tags_index.json from Notion.
 
 Usage:
-  node scripts/build-admin-indexes.mjs [--env-file /path/to/auto-post/.env] [--out-dir /tmp/admin-indexes]
+  node scripts/build-admin-indexes.mjs [--env-file /path/to/media-platform/.env] [--out-dir /tmp/admin-indexes]
 
 Environment variables (required):
   NOTION_TOKEN

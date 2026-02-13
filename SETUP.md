@@ -171,8 +171,8 @@ curl "https://graph.threads.net/v1.0/me?access_token={ACCESS_TOKEN}"
 ### 5.1 クローン & インストール
 
 ```bash
-git clone https://github.com/kwsksj/auto-post.git
-cd auto-post
+git clone https://github.com/kwsksj/media-platform.git
+cd media-platform
 python3 -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -e ".[dev]"

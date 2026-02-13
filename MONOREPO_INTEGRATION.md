@@ -2,7 +2,7 @@
 
 ## Recommendation
 
-Use this repository (`auto-post`) as the monorepo canonical target and import `gallery` into it.
+Use this repository (`media-platform`) as the monorepo canonical target and import `gallery` into it.
 
 Reason:
 - scheduled GitHub Actions are already configured here
@@ -20,7 +20,7 @@ If you switch canonical repo away from here first, you must re-enter all secret 
 
 ## Safe Integration Path
 
-Run in `/Users/kawasakiseiji/development/auto-post`:
+Run in `<repo-root>`:
 
 ```bash
 git checkout -b codex/monorepo-bootstrap

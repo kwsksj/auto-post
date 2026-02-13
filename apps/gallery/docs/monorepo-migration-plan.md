@@ -1,19 +1,19 @@
 # Monorepo Migration Record (Historical)
 
-この文書は、`gallery` + `auto-post` の統合計画の実施結果を残すための履歴です。
+この文書は、`gallery` + `media-platform`（旧 `auto-post`）の統合計画の実施結果を残すための履歴です。
 
 ## Current Status
 
-- canonical repository: `/Users/kawasakiseiji/development/auto-post`
-- gallery module: `/Users/kawasakiseiji/development/auto-post/apps/gallery`
+- canonical repository: `media-platform` (`<repo-root>`)
+- gallery module: `<repo-root>/apps/gallery`
 - split-repo (`gallery`) は legacy 扱い
 
 ## Decision Summary
 
-- canonical は `auto-post` を採用
+- canonical は `media-platform`（旧 `auto-post`）を採用
 - 理由:
-  - GitHub Actions の定期実行が既に `auto-post` で運用済み
-  - 必要な repository secrets が `auto-post` に設定済み
+  - GitHub Actions の定期実行が既に canonical repo で運用済み
+  - 必要な repository secrets が既に canonical repo に設定済み
   - GitHub Actions secret 値は API/CLI で取得できず、repo 変更時に再入力コストが高い
 
 ## Execution Summary
@@ -36,7 +36,7 @@
 
 ## Current Operation Rule
 
-- 日常運用・改修は `auto-post/main` を正本として実施
+- 日常運用・改修は `media-platform/main` を正本として実施
 - gallery 関連の変更は `apps/gallery` に集約
 - split-repo 側は履歴参照・緊急比較用途に限定
 

@@ -4,20 +4,23 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 GALLERY_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-# Resolve canonical auto-post repo path:
+# Resolve canonical repo path:
 # 1) explicit AUTO_POST_DIR, if provided
-# 2) monorepo layout: <auto-post>/apps/gallery
-# 3) split-repo layout: <parent>/auto-post
+# 2) monorepo layout: <repo-root>/apps/gallery
+# 3) split-repo layout: <parent>/media-platform (legacy: <parent>/auto-post)
 if [[ -n "${AUTO_POST_DIR:-}" ]]; then
   AUTO_POST_DIR="${AUTO_POST_DIR}"
 else
   MONOREPO_CANDIDATE="$(cd "${GALLERY_DIR}/../.." && pwd)"
-  SPLIT_REPO_CANDIDATE="$(cd "${GALLERY_DIR}/.." && pwd)/auto-post"
+  SPLIT_REPO_CANDIDATE_MEDIA="$(cd "${GALLERY_DIR}/.." && pwd)/media-platform"
+  SPLIT_REPO_CANDIDATE_LEGACY="$(cd "${GALLERY_DIR}/.." && pwd)/auto-post"
 
   if [[ -d "${MONOREPO_CANDIDATE}/.git" && -d "${MONOREPO_CANDIDATE}/.github/workflows" ]]; then
     AUTO_POST_DIR="${MONOREPO_CANDIDATE}"
+  elif [[ -d "${SPLIT_REPO_CANDIDATE_MEDIA}/.git" ]]; then
+    AUTO_POST_DIR="${SPLIT_REPO_CANDIDATE_MEDIA}"
   else
-    AUTO_POST_DIR="${SPLIT_REPO_CANDIDATE}"
+    AUTO_POST_DIR="${SPLIT_REPO_CANDIDATE_LEGACY}"
   fi
 fi
 
@@ -42,10 +45,10 @@ else
   exit 1
 fi
 
-echo "[2/4] Checking auto-post repo path"
+echo "[2/4] Checking canonical repo path"
 if [[ ! -d "${AUTO_POST_DIR}/.git" ]]; then
-  echo "ERROR: auto-post git repo not found at ${AUTO_POST_DIR}" >&2
-  echo "Hint: set AUTO_POST_DIR=/path/to/auto-post and rerun." >&2
+  echo "ERROR: canonical git repo not found at ${AUTO_POST_DIR}" >&2
+  echo "Hint: set AUTO_POST_DIR=/path/to/media-platform and rerun." >&2
   exit 1
 fi
 echo "OK: ${AUTO_POST_DIR}"
@@ -62,7 +65,7 @@ if [[ "${IS_GALLERY_GIT_REPO}" -eq 1 ]]; then
   fi
 fi
 if [[ -n "${auto_post_dirty}" ]]; then
-  echo "ERROR: auto-post repo has uncommitted changes." >&2
+  echo "ERROR: canonical repo has uncommitted changes." >&2
   exit 1
 fi
 if [[ "${IS_GALLERY_GIT_REPO}" -eq 1 && -n "${gallery_dirty}" ]]; then
@@ -71,7 +74,7 @@ else
   if [[ "${IS_GALLERY_GIT_REPO}" -eq 1 ]]; then
     echo "OK: both repos are clean"
   else
-    echo "OK: auto-post repo is clean (gallery is module directory)"
+    echo "OK: canonical repo is clean (gallery is module directory)"
   fi
 fi
 
@@ -112,7 +115,7 @@ EOF
 
 if [[ "${IMPORT_MODE}" == "subtree" ]]; then
 cat <<EOF
-History-preserving import (auto-post is canonical):
+History-preserving import (canonical repo):
   git -C "${AUTO_POST_DIR}" checkout -b codex/monorepo-bootstrap
   git -C "${AUTO_POST_DIR}" remote add gallery-local "${GALLERY_DIR}"
   git -C "${AUTO_POST_DIR}" fetch gallery-local
@@ -120,7 +123,7 @@ History-preserving import (auto-post is canonical):
 EOF
 else
 cat <<EOF
-Copy import (no history, auto-post is canonical):
+Copy import (no history, canonical repo):
   git -C "${AUTO_POST_DIR}" checkout -b codex/monorepo-bootstrap
   mkdir -p "${AUTO_POST_DIR}/apps/gallery"
   rsync -a --exclude .git "${GALLERY_DIR}/" "${AUTO_POST_DIR}/apps/gallery/"
