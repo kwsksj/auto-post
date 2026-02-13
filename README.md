@@ -2,6 +2,19 @@
 
 木彫り教室の生徒作品写真を **Instagram / X / Threads** に自動投稿するシステム。
 
+## Repository Scope
+
+このリポジトリは現在、以下を担当します。
+
+- SNS自動投稿（Instagram / X / Threads）
+- Google Takeout 取り込み
+- `gallery.json` / サムネ生成とR2反映
+- GitHub Actions の定期実行運用
+
+モノレポ化時は、このリポジトリを canonical（統合先）として運用する方針を推奨します。
+
+- 統合ノート: `MONOREPO_INTEGRATION.md`
+
 ## 特徴
 
 - 📅 GitHub Actions による毎日の自動投稿（16:42 JST）
@@ -58,6 +71,22 @@ X_ACCESS_TOKEN_SECRET=xxx
 > GitHub Actions で使用する場合は、リポジトリの **Settings > Secrets** に同じ変数を設定してください。
 
 ## 使い方
+
+### モノレポ運用ショートカット（Makefile）
+
+```bash
+# ヘルプ
+make help
+
+# 投稿dry-run
+make publish-dry
+
+# gallery.json export dry-run（R2アップロードなし）
+make gallery-export
+
+# gallery側worker dry-run
+make worker-dry
+```
 
 ### 日次投稿
 
@@ -144,6 +173,20 @@ auto-post import-folders <folder>
 ## ドキュメント
 
 - [詳細仕様書](./CURRENT_SYSTEM.md) - Notionスキーマ、API詳細、トークン管理など
+- [モノレポ統合ノート](./MONOREPO_INTEGRATION.md)
+
+### 補助スクリプト
+
+```bash
+# workflowが要求するSecrets名を一覧化（.envのキー存在チェック付き）
+scripts/list-required-gh-secrets.sh
+
+# .env の値から GitHub Secrets を再設定（値はGitHubからは取得不可）
+scripts/push-gh-secrets-from-env.sh <owner/repo>
+
+# 実際には更新せず、対象キーだけ確認
+scripts/push-gh-secrets-from-env.sh --dry-run <owner/repo>
+```
 
 ## ライセンス
 
