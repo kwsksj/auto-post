@@ -72,6 +72,22 @@ X_ACCESS_TOKEN_SECRET=xxx
 
 ## 使い方
 
+### モノレポ運用ショートカット（Makefile）
+
+```bash
+# ヘルプ
+make help
+
+# 投稿dry-run
+make publish-dry
+
+# gallery.json export dry-run（R2アップロードなし）
+make gallery-export
+
+# gallery側worker dry-run
+make worker-dry
+```
+
 ### 日次投稿
 
 ```bash
