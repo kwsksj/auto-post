@@ -275,6 +275,55 @@ function normalizeTagStatus(raw) {
   return "active";
 }
 
+function toHiragana(value) {
+  const input = asString(value);
+  let out = "";
+  for (const ch of input) {
+    const code = ch.charCodeAt(0);
+    if (code >= 0x30a1 && code <= 0x30f6) {
+      out += String.fromCharCode(code - 0x60);
+    } else {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+function normalizeTagNameKey(value) {
+  return toHiragana(asString(value).toLowerCase().trim());
+}
+
+function normalizeTagAliasValues(raw) {
+  const inputs = Array.isArray(raw) ? raw : [raw];
+  const out = [];
+  const seen = new Set();
+  for (const source of inputs) {
+    const aliases = splitAliases(asString(source));
+    for (const aliasRaw of aliases) {
+      const alias = asString(aliasRaw).trim();
+      const key = normalizeTagNameKey(alias);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(alias);
+    }
+  }
+  return out;
+}
+
+function findExistingTagByNameOrAlias(tags, names) {
+  const candidates = Array.isArray(names) ? names : [names];
+  const keys = new Set(candidates.map((value) => normalizeTagNameKey(value)).filter(Boolean));
+  if (keys.size === 0) return null;
+
+  for (const tag of Array.isArray(tags) ? tags : []) {
+    const values = [tag?.name, ...(Array.isArray(tag?.aliases) ? tag.aliases : [])];
+    for (const value of values) {
+      if (keys.has(normalizeTagNameKey(value))) return tag;
+    }
+  }
+  return null;
+}
+
 async function queryAllDatabasePages(env, databaseId, queryBody = {}) {
   const pages = [];
   let cursor = "";
@@ -612,6 +661,16 @@ function notionSelect(value) {
   return { select: { name } };
 }
 
+function notionMultiSelect(values) {
+  if (!Array.isArray(values)) return { multi_select: [] };
+  return {
+    multi_select: values
+      .map((value) => asString(value).trim())
+      .filter(Boolean)
+      .map((name) => ({ name })),
+  };
+}
+
 function notionStatus(value) {
   const name = asString(value).trim();
   if (!name) return { status: null };
@@ -933,6 +992,8 @@ async function handleNotionCreateTag(request, env) {
   if (!name) return badRequest("missing name");
   const parentIds = uniqueIds(Array.isArray(payload.parentIds) ? payload.parentIds : []);
   const childIds = uniqueIds(Array.isArray(payload.childIds) ? payload.childIds : []);
+  const aliasesRaw = normalizeTagAliasValues(payload.aliases);
+  const aliases = aliasesRaw.filter((alias) => normalizeTagNameKey(alias) !== normalizeTagNameKey(name));
 
   const tagsDbRes = await notionFetch(env, `/databases/${tagsDbId}`, { method: "GET" });
   if (!tagsDbRes.ok) {
@@ -942,14 +1003,43 @@ async function handleNotionCreateTag(request, env) {
   const tagsProps = getTagsProps(env);
   const titleProp = pickPropertyName(tagsDb, [tagsProps.title, "タグ"], "title");
   const statusProp = pickPropertyName(tagsDb, [tagsProps.status, "状態"], "");
+  const aliasesProp = pickPropertyName(tagsDb, [getEnvString(env, "NOTION_TAGS_ALIASES_PROP", "別名"), "別名"], "");
   const parentsProp = pickPropertyName(tagsDb, [getEnvString(env, "NOTION_TAGS_PARENTS_PROP", "親タグ"), "親タグ"], "");
   const childrenProp = pickPropertyName(tagsDb, [getEnvString(env, "NOTION_TAGS_CHILDREN_PROP", "子タグ"), "子タグ"], "");
   if (parentIds.length > 0 && !parentsProp) return badRequest("親タグプロパティが見つかりません");
   if (childIds.length > 0 && !childrenProp) return badRequest("子タグプロパティが見つかりません");
+  if (aliases.length > 0 && !aliasesProp) return badRequest("別名プロパティが見つかりません");
+
+  const tagsQueryRes = await queryAllDatabasePages(env, tagsDbId);
+  if (!tagsQueryRes.ok) {
+    return jsonResponse({ ok: false, error: "failed to query tags database", detail: tagsQueryRes.data }, 500);
+  }
+  const tagsIndexSnapshot = buildTagsIndexFromNotion(env, tagsDbId, tagsDb, tagsQueryRes.pages);
+  const duplicateTag = findExistingTagByNameOrAlias(tagsIndexSnapshot.tags, [name, ...aliases]);
+  if (duplicateTag) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "同名または別名のタグが既に存在します",
+        existing_id: duplicateTag.id,
+        existing_tag: duplicateTag,
+      },
+      409,
+    );
+  }
+
   const properties = {};
   properties[titleProp || tagsProps.title || "タグ"] = notionTitle(name);
   if (parentsProp && parentIds.length > 0) properties[parentsProp] = notionRelation(parentIds);
   if (childrenProp && childIds.length > 0) properties[childrenProp] = notionRelation(childIds);
+  if (aliasesProp && aliases.length > 0) {
+    const aliasesPropSchema = tagsDb?.properties?.[aliasesProp] || null;
+    if (aliasesPropSchema?.type === "multi_select") {
+      properties[aliasesProp] = notionMultiSelect(aliases);
+    } else {
+      properties[aliasesProp] = notionRichText(aliases.join(", "));
+    }
+  }
 
   let statusName = "";
   if (statusProp) {
@@ -977,6 +1067,7 @@ async function handleNotionCreateTag(request, env) {
     return jsonResponse({ ok: false, error: "failed to create notion tag", detail: res.data }, 500);
   }
 
+  const tagsIndex = await refreshTagsIndexAfterTagMutation(env);
   return okResponse(
     {
       id: asString(res.data?.id),
@@ -984,9 +1075,10 @@ async function handleNotionCreateTag(request, env) {
       status: statusName || "active",
       parents: parentIds,
       children: childIds,
-      aliases: [],
+      aliases,
       merge_to: "",
       usage_count: 0,
+      tags_index: tagsIndex,
     },
     201,
   );
@@ -1006,8 +1098,17 @@ async function handleNotionUpdateTag(request, env) {
   const tagsDb = tagsDbRes.data;
   const tagsProps = getTagsProps(env);
   const titleProp = pickPropertyName(tagsDb, [tagsProps.title, "タグ"], "title");
+  const statusProp = pickPropertyName(tagsDb, [getEnvString(env, "NOTION_TAGS_STATUS_PROP", "状態"), "状態"], "");
+  const aliasesProp = pickPropertyName(tagsDb, [getEnvString(env, "NOTION_TAGS_ALIASES_PROP", "別名"), "別名"], "");
+  const mergeToProp = pickPropertyName(tagsDb, [getEnvString(env, "NOTION_TAGS_MERGE_TO_PROP", "統合先"), "統合先"], "");
   const parentsProp = pickPropertyName(tagsDb, [getEnvString(env, "NOTION_TAGS_PARENTS_PROP", "親タグ"), "親タグ"], "");
   const childrenProp = pickPropertyName(tagsDb, [getEnvString(env, "NOTION_TAGS_CHILDREN_PROP", "子タグ"), "子タグ"], "");
+  const usageCountProp = pickPropertyName(tagsDb, [getEnvString(env, "NOTION_TAGS_USAGE_COUNT_PROP", "作品数"), "作品数"], "");
+  const worksRelProp = pickPropertyName(tagsDb, [getEnvString(env, "NOTION_TAGS_WORKS_REL_PROP", "作品"), "作品"], "");
+  const withTagsIndex = async (body) => {
+    const tagsIndex = await refreshTagsIndexAfterTagMutation(env);
+    return { ...body, tags_index: tagsIndex };
+  };
 
   const loadTagPage = async (id) => {
     const res = await notionFetch(env, `/pages/${id}`, { method: "GET" });
@@ -1015,6 +1116,32 @@ async function handleNotionUpdateTag(request, env) {
       return { ok: false, detail: res.data };
     }
     return { ok: true, page: res.data };
+  };
+
+  const buildTagResponseFromPage = (page) => {
+    const id = asString(page?.id).trim();
+    const name = extractPropertyText(getPageProperty(page, titleProp)).trim();
+    const status = normalizeTagStatus(extractPropertyText(getPageProperty(page, statusProp)));
+    const aliases = extractAliases(getPageProperty(page, aliasesProp)).filter(
+      (alias) => normalizeTagNameKey(alias) !== normalizeTagNameKey(name),
+    );
+    const mergeTo = extractRelationIds(getPageProperty(page, mergeToProp))[0] || "";
+    const parents = parentsProp ? extractRelationIds(getPageProperty(page, parentsProp)) : [];
+    const children = childrenProp ? extractRelationIds(getPageProperty(page, childrenProp)) : [];
+    let usageCount = Math.max(0, Math.floor(extractPropertyNumber(getPageProperty(page, usageCountProp))));
+    if (!usageCount && worksRelProp) {
+      usageCount = Math.max(0, extractRelationIds(getPageProperty(page, worksRelProp)).length);
+    }
+    return {
+      id,
+      name,
+      status,
+      aliases,
+      merge_to: mergeTo,
+      parents,
+      children,
+      usage_count: usageCount,
+    };
   };
 
   const patchTagRelations = async ({ id, addParentIds = [], addChildIds = [] }) => {
@@ -1042,12 +1169,7 @@ async function handleNotionUpdateTag(request, env) {
     if (!parentsChanged && !childrenChanged) {
       return {
         ok: true,
-        tag: {
-          id: tagId,
-          name: extractPropertyText(getPageProperty(page, titleProp)),
-          parents: currentParents,
-          children: currentChildren,
-        },
+        tag: buildTagResponseFromPage(page),
       };
     }
 
@@ -1063,14 +1185,61 @@ async function handleNotionUpdateTag(request, env) {
       return { ok: false, error: "failed to update tag page", detail: patchRes.data };
     }
 
+    const nextPage = patchRes.data && typeof patchRes.data === "object" ? patchRes.data : page;
     return {
       ok: true,
-      tag: {
-        id: tagId,
-        name: extractPropertyText(getPageProperty(page, titleProp)),
-        parents: nextParents,
-        children: nextChildren,
-      },
+      tag: buildTagResponseFromPage(nextPage),
+    };
+  };
+
+  const patchTagAliases = async ({ id, aliases }) => {
+    const tagId = asString(id).trim();
+    if (!tagId) return { ok: false, error: "missing tag id" };
+    if (!aliasesProp) return { ok: false, error: "aliases property not found" };
+
+    const loaded = await loadTagPage(tagId);
+    if (!loaded.ok) {
+      return { ok: false, error: "failed to fetch tag page", detail: loaded.detail };
+    }
+    const page = loaded.page;
+    const currentTag = buildTagResponseFromPage(page);
+    const nextAliases = normalizeTagAliasValues(aliases).filter(
+      (alias) => normalizeTagNameKey(alias) !== normalizeTagNameKey(currentTag.name),
+    );
+    const currentAliasKeys = new Set(
+      (Array.isArray(currentTag.aliases) ? currentTag.aliases : []).map((value) => normalizeTagNameKey(value)).filter(Boolean),
+    );
+    const nextAliasKeys = new Set(nextAliases.map((value) => normalizeTagNameKey(value)).filter(Boolean));
+    const aliasesChanged =
+      currentAliasKeys.size !== nextAliasKeys.size || [...currentAliasKeys].some((key) => !nextAliasKeys.has(key));
+
+    if (!aliasesChanged) {
+      return {
+        ok: true,
+        tag: { ...currentTag, aliases: nextAliases },
+      };
+    }
+
+    const aliasesPropSchema = tagsDb?.properties?.[aliasesProp] || null;
+    const aliasesPropertyValue =
+      aliasesPropSchema?.type === "multi_select" ? notionMultiSelect(nextAliases) : notionRichText(nextAliases.join(", "));
+
+    const patchRes = await notionFetch(env, `/pages/${tagId}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        properties: {
+          [aliasesProp]: aliasesPropertyValue,
+        },
+      }),
+    });
+    if (!patchRes.ok) {
+      return { ok: false, error: "failed to update tag aliases", detail: patchRes.data };
+    }
+
+    const nextPage = patchRes.data && typeof patchRes.data === "object" ? patchRes.data : page;
+    return {
+      ok: true,
+      tag: buildTagResponseFromPage(nextPage),
     };
   };
 
@@ -1078,18 +1247,48 @@ async function handleNotionUpdateTag(request, env) {
   if (directTagId) {
     const addParentIds = Array.isArray(payload.addParentIds) ? payload.addParentIds : [];
     const addChildIds = Array.isArray(payload.addChildIds) ? payload.addChildIds : [];
-    const updated = await patchTagRelations({
-      id: directTagId,
-      addParentIds,
-      addChildIds,
-    });
-    if (!updated.ok) {
-      return jsonResponse(
-        { ok: false, error: updated.error || "failed to update tag relation", detail: updated.detail || null },
-        500,
-      );
+    const hasRelationUpdate = addParentIds.length > 0 || addChildIds.length > 0;
+    const hasAliasesUpdate = Object.prototype.hasOwnProperty.call(payload, "aliases");
+    if (!hasRelationUpdate && !hasAliasesUpdate) return badRequest("no updates");
+
+    let latestTag = null;
+    if (hasRelationUpdate) {
+      const updated = await patchTagRelations({
+        id: directTagId,
+        addParentIds,
+        addChildIds,
+      });
+      if (!updated.ok) {
+        return jsonResponse(
+          { ok: false, error: updated.error || "failed to update tag relation", detail: updated.detail || null },
+          500,
+        );
+      }
+      latestTag = updated.tag;
     }
-    return okResponse(updated.tag);
+
+    if (hasAliasesUpdate) {
+      const updatedAliases = await patchTagAliases({
+        id: directTagId,
+        aliases: payload.aliases,
+      });
+      if (!updatedAliases.ok) {
+        return jsonResponse(
+          { ok: false, error: updatedAliases.error || "failed to update tag aliases", detail: updatedAliases.detail || null },
+          500,
+        );
+      }
+      latestTag = updatedAliases.tag;
+    }
+
+    if (!latestTag) {
+      const loaded = await loadTagPage(directTagId);
+      if (!loaded.ok) {
+        return jsonResponse({ ok: false, error: "failed to fetch tag page", detail: loaded.detail || null }, 500);
+      }
+      latestTag = buildTagResponseFromPage(loaded.page);
+    }
+    return okResponse(await withTagsIndex(latestTag));
   }
 
   const parentId = asString(payload.parentId).trim();
@@ -1117,10 +1316,12 @@ async function handleNotionUpdateTag(request, env) {
     parentUpdated = result.tag;
   }
 
-  return okResponse({
-    parent: parentUpdated || { id: parentId, children: [] },
-    child: childUpdated.tag,
-  });
+  return okResponse(
+    await withTagsIndex({
+      parent: parentUpdated || { id: parentId, children: [] },
+      child: childUpdated.tag,
+    }),
+  );
 }
 
 async function handleR2Upload(request, env) {
@@ -1651,19 +1852,19 @@ async function handleTriggerGalleryUpdate(request, env) {
   return jsonResponse({ ok: false, error: `GitHub API error: ${text}` }, 500);
 }
 
-async function handleTriggerTagsIndexUpdate(request, env) {
+async function regenerateTagsIndex(env) {
   const tagsDbId = getEnvString(env, "NOTION_TAGS_DB_ID");
-  if (!env.GALLERY_R2) return serverError("R2 binding not configured (GALLERY_R2)");
-  if (!tagsDbId) return serverError("NOTION_TAGS_DB_ID not configured");
+  if (!env.GALLERY_R2) return { ok: false, error: "R2 binding not configured (GALLERY_R2)" };
+  if (!tagsDbId) return { ok: false, error: "NOTION_TAGS_DB_ID not configured" };
 
   const tagsDbRes = await notionFetch(env, `/databases/${tagsDbId}`, { method: "GET" });
   if (!tagsDbRes.ok) {
-    return jsonResponse({ ok: false, error: "failed to fetch tags database", detail: tagsDbRes.data }, 500);
+    return { ok: false, error: "failed to fetch tags database", detail: tagsDbRes.data };
   }
 
   const queryRes = await queryAllDatabasePages(env, tagsDbId);
   if (!queryRes.ok) {
-    return jsonResponse({ ok: false, error: "failed to query tags database", detail: queryRes.data }, 500);
+    return { ok: false, error: "failed to query tags database", detail: queryRes.data };
   }
 
   const index = buildTagsIndexFromNotion(env, tagsDbId, tagsDbRes.data, queryRes.pages);
@@ -1676,11 +1877,53 @@ async function handleTriggerTagsIndexUpdate(request, env) {
     },
   });
 
-  return okResponse({
-    message: "tags index regenerated",
+  return {
+    ok: true,
     key,
     count: index.tags.length,
     generated_at: index.generated_at,
+  };
+}
+
+async function refreshTagsIndexAfterTagMutation(env) {
+  const result = await regenerateTagsIndex(env);
+  if (result.ok) {
+    return {
+      regenerated: true,
+      key: result.key,
+      count: result.count,
+      generated_at: result.generated_at,
+    };
+  }
+
+  console.error("failed to regenerate tags index after tag mutation", {
+    error: result.error,
+    detail: result.detail || null,
+  });
+  return {
+    regenerated: false,
+    error: result.error,
+  };
+}
+
+async function handleTriggerTagsIndexUpdate(request, env) {
+  const result = await regenerateTagsIndex(env);
+  if (!result.ok) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: result.error,
+        detail: result.detail || null,
+      },
+      500,
+    );
+  }
+
+  return okResponse({
+    message: "tags index regenerated",
+    key: result.key,
+    count: result.count,
+    generated_at: result.generated_at,
   });
 }
 
