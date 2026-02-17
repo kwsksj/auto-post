@@ -1206,12 +1206,12 @@ async function handleNotionUpdateTag(request, env) {
     const nextAliases = normalizeTagAliasValues(aliases).filter(
       (alias) => normalizeTagNameKey(alias) !== normalizeTagNameKey(currentTag.name),
     );
-    const currentAliasKeys = (Array.isArray(currentTag.aliases) ? currentTag.aliases : []).map((value) =>
-      normalizeTagNameKey(value),
+    const currentAliasKeys = new Set(
+      (Array.isArray(currentTag.aliases) ? currentTag.aliases : []).map((value) => normalizeTagNameKey(value)).filter(Boolean),
     );
-    const nextAliasKeys = nextAliases.map((value) => normalizeTagNameKey(value));
+    const nextAliasKeys = new Set(nextAliases.map((value) => normalizeTagNameKey(value)).filter(Boolean));
     const aliasesChanged =
-      currentAliasKeys.length !== nextAliasKeys.length || currentAliasKeys.some((value, index) => value !== nextAliasKeys[index]);
+      currentAliasKeys.size !== nextAliasKeys.size || [...currentAliasKeys].some((key) => !nextAliasKeys.has(key));
 
     if (!aliasesChanged) {
       return {
