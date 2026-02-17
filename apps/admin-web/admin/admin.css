@@ -412,6 +412,23 @@ select.input[multiple] option {
 	flex: 1 1 220px;
 }
 
+.tag-relation-editor__alias {
+	margin-top: 4px;
+	padding-top: 10px;
+	border-top: 1px dashed var(--border);
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.tag-relation-editor__alias .form-row {
+	margin: 0;
+}
+
+.tag-relation-editor__alias .form-row + .form-row {
+	margin-top: 0;
+}
+
 .help-toggle {
 	margin-top: 4px;
 }

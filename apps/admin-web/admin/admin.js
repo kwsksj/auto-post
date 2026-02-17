@@ -236,7 +236,10 @@ async function apiFetch(path, init = {}) {
 			throw new Error("認証に失敗しました。ヘッダーの操作メニューから管理APIトークンを再入力してください。");
 		}
 		const message = data?.error || data?.message || `HTTP ${res.status}`;
-		throw new Error(message);
+		const error = new Error(message);
+		error.status = res.status;
+		error.data = data;
+		throw error;
 	}
 	return data;
 }
@@ -565,6 +568,29 @@ function normalizeTagNameKey(name) {
 	return normalizeSearch(name);
 }
 
+function normalizeAliasInput(raw) {
+	const values = Array.isArray(raw) ? raw : [raw];
+	const out = [];
+	const seen = new Set();
+	for (const value of values) {
+		const parts = String(value || "")
+			.split(/[\s,、，;；\n\r\t]+/u)
+			.map((part) => trimText(part))
+			.filter(Boolean);
+		for (const alias of parts) {
+			const key = normalizeTagNameKey(alias);
+			if (!key || seen.has(key)) continue;
+			seen.add(key);
+			out.push(alias);
+		}
+	}
+	return out;
+}
+
+function formatAliasesInput(aliases) {
+	return normalizeAliasInput(aliases).join(", ");
+}
+
 function indexTagName(tag) {
 	const key = normalizeTagNameKey(tag?.name);
 	if (!key || !tag?.id) return;
@@ -697,22 +723,27 @@ async function createTagFromUi(rawName, { parentIds = [], childIds = [] } = {}) 
 
 	const normalizedParentIds = normalizeTagIdList(parentIds);
 	const normalizedChildIds = normalizeTagIdList(childIds);
+	const attachRelationsIfNeeded = async (id) => {
+		const resolvedId = resolveMergedTagId(trimText(id));
+		if (!resolvedId) return;
+		if (normalizedParentIds.length === 0 && normalizedChildIds.length === 0) return;
+		const updated = await apiFetch("/admin/notion/tag", {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				id: resolvedId,
+				addParentIds: normalizedParentIds,
+				addChildIds: normalizedChildIds,
+			}),
+		});
+		const nextTag = normalizeTagForState(updated, state.tagsById.get(resolvedId) || { id: resolvedId });
+		upsertTagSearchEntry(nextTag);
+	};
+
 	const existingId = findExistingTagIdByName(name);
 	if (existingId) {
 		const id = resolveMergedTagId(existingId);
-		if (normalizedParentIds.length > 0 || normalizedChildIds.length > 0) {
-			const updated = await apiFetch("/admin/notion/tag", {
-				method: "PATCH",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					id,
-					addParentIds: normalizedParentIds,
-					addChildIds: normalizedChildIds,
-				}),
-			});
-			const nextTag = normalizeTagForState(updated, state.tagsById.get(id) || { id });
-			upsertTagSearchEntry(nextTag);
-		}
+		await attachRelationsIfNeeded(id);
 		return {
 			id,
 			created: false,
@@ -721,15 +752,44 @@ async function createTagFromUi(rawName, { parentIds = [], childIds = [] } = {}) 
 		};
 	}
 
-	const created = await apiFetch("/admin/notion/tag", {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({
-			name,
-			parentIds: normalizedParentIds,
-			childIds: normalizedChildIds,
-		}),
-	});
+	let created = null;
+	try {
+		created = await apiFetch("/admin/notion/tag", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				name,
+				parentIds: normalizedParentIds,
+				childIds: normalizedChildIds,
+			}),
+		});
+	} catch (err) {
+		const isDuplicate = Number(err?.status) === 409;
+		if (!isDuplicate) throw err;
+
+		const conflictTag = normalizeTagForState(err?.data?.existing_tag, {
+			id: trimText(err?.data?.existing_id),
+		});
+		if (conflictTag.id) upsertTagSearchEntry(conflictTag);
+
+		let resolvedId = resolveMergedTagId(conflictTag.id);
+		if (!resolvedId) {
+			try {
+				await loadSchemaAndIndexes();
+			} catch {}
+			resolvedId = resolveMergedTagId(findExistingTagIdByName(name));
+		}
+		if (!resolvedId) throw err;
+
+		await attachRelationsIfNeeded(resolvedId);
+		return {
+			id: resolvedId,
+			created: false,
+			parentIds: normalizeTagIdList(state.tagsById.get(resolvedId)?.parents || []),
+			childIds: normalizeTagIdList(state.tagsById.get(resolvedId)?.children || []),
+		};
+	}
+
 	const id = trimText(created?.id);
 	if (!id) throw new Error("タグ作成結果が不正です（idなし）");
 
@@ -775,6 +835,26 @@ async function addTagParentChildRelation(parentIdRaw, childIdRaw) {
 	}
 
 	return { parentId, childId };
+}
+
+async function updateTagAliases(tagIdRaw, aliasesRaw) {
+	const tagId = resolveMergedTagId(trimText(tagIdRaw));
+	if (!tagId) throw new Error("対象タグを選択してください");
+	const aliases = normalizeAliasInput(aliasesRaw);
+
+	const updated = await apiFetch("/admin/notion/tag", {
+		method: "PATCH",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({
+			id: tagId,
+			aliases,
+		}),
+	});
+
+	const nextTag = normalizeTagForState(updated, state.tagsById.get(tagId) || { id: tagId });
+	if (!nextTag.id) throw new Error("タグ更新結果が不正です（idなし）");
+	upsertTagSearchEntry(nextTag);
+	return nextTag;
 }
 
 function appendCreateTagSuggest(suggestRoot, query, onCreated, { relatedTagIds = [] } = {}) {
@@ -922,8 +1002,8 @@ function createTagRelationEditor({ onTagAdded, getRelatedTagIds = () => [], onRe
 	const root = el("div", { class: "tag-relation-editor" });
 	root.appendChild(
 		el("div", { class: "tag-relation-editor__header" }, [
-			el("div", { class: "subnote", text: "タグ親子設定（タグDB）" }),
-			createHelpToggle("親/子の検索候補から新規タグを作成できます。作成後に「親子関係を追加」で反映してください。", {
+			el("div", { class: "subnote", text: "タグ設定（タグDB）" }),
+			createHelpToggle("親/子の検索候補から新規タグを作成して関係追加できます。選択したタグの別名もここで編集できます。", {
 				ariaLabel: "タグ親子設定の説明を表示",
 			}),
 		]),
@@ -931,6 +1011,7 @@ function createTagRelationEditor({ onTagAdded, getRelatedTagIds = () => [], onRe
 
 	let parentTagId = "";
 	let childTagId = "";
+	let aliasTagId = "";
 
 	const pickFromRelated = (targetRoot, { selectedId, onPick, roleLabel }) => {
 		targetRoot.innerHTML = "";
@@ -971,6 +1052,18 @@ function createTagRelationEditor({ onTagAdded, getRelatedTagIds = () => [], onRe
 	const childPicked = el("div", { class: "chips" });
 	const childCandidates = el("div", { class: "tag-relation-editor__candidates" });
 
+	const aliasTargetInput = el("input", { class: "input input--sm", type: "text", placeholder: "別名を編集するタグを検索" });
+	const aliasTargetSuggest = el("div", { class: "suggest" });
+	const aliasTargetPicker = el("div", { class: "tag-input" }, [aliasTargetInput, aliasTargetSuggest]);
+	const aliasTargetPicked = el("div", { class: "chips" });
+	const aliasInput = el("input", {
+		class: "input input--sm",
+		type: "text",
+		placeholder: "別名（例: どうぶつ, アニマル）",
+		autocomplete: "off",
+	});
+	const aliasCurrent = el("div", { class: "subnote" });
+
 	const refreshPicked = () => {
 		renderPickedTagChip(parentPicked, {
 			id: parentTagId,
@@ -1009,7 +1102,30 @@ function createTagRelationEditor({ onTagAdded, getRelatedTagIds = () => [], onRe
 			roleLabel: "子",
 		});
 	};
+
+	const refreshAliasEditor = ({ syncInput = false } = {}) => {
+		renderPickedTagChip(aliasTargetPicked, {
+			id: aliasTagId,
+			roleLabel: "対象タグ",
+			onClear: () => {
+				aliasTagId = "";
+				aliasTargetInput.value = "";
+				aliasInput.value = "";
+				refreshAliasEditor();
+			},
+		});
+		const tag = aliasTagId ? state.tagsById.get(aliasTagId) : null;
+		if (syncInput) {
+			aliasInput.value = formatAliasesInput(tag?.aliases || []);
+		}
+		const current = formatAliasesInput(tag?.aliases || []);
+		aliasCurrent.textContent = aliasTagId
+			? `現在の別名: ${current || "なし"}`
+			: "対象タグを選ぶと現在の別名を表示します";
+	};
+
 	refreshPicked();
+	refreshAliasEditor();
 
 	const parentBinder = bindTagPickerInput({
 		inputEl: parentInput,
@@ -1031,6 +1147,17 @@ function createTagRelationEditor({ onTagAdded, getRelatedTagIds = () => [], onRe
 		onCreated: (id) => onTagAdded?.(id),
 		getRelatedTagIds,
 	});
+	const aliasBinder = bindTagPickerInput({
+		inputEl: aliasTargetInput,
+		suggestRoot: aliasTargetSuggest,
+		onPick: (id) => {
+			aliasTagId = resolveMergedTagId(id);
+			aliasTargetInput.value = state.tagsById.get(aliasTagId)?.name || "";
+			refreshAliasEditor({ syncInput: true });
+		},
+		onCreated: (id) => onTagAdded?.(id),
+		getRelatedTagIds,
+	});
 
 	const addRelationBtn = el("button", { type: "button", class: "btn", text: "親子関係を追加" });
 	addRelationBtn.addEventListener("click", async () => {
@@ -1047,6 +1174,33 @@ function createTagRelationEditor({ onTagAdded, getRelatedTagIds = () => [], onRe
 		}
 	});
 
+	const saveAliasesBtn = el("button", { type: "button", class: "btn", text: "別名を保存" });
+	saveAliasesBtn.addEventListener("click", async () => {
+		saveAliasesBtn.disabled = true;
+		try {
+			const updated = await updateTagAliases(aliasTagId, aliasInput.value);
+			aliasTagId = resolveMergedTagId(updated.id);
+			aliasTargetInput.value = state.tagsById.get(aliasTagId)?.name || updated.name || "";
+			refreshAliasEditor({ syncInput: true });
+			showToast("タグ別名を保存しました");
+		} catch (err) {
+			showToast(`タグ別名の保存に失敗: ${err.message}`);
+		} finally {
+			saveAliasesBtn.disabled = false;
+		}
+	});
+
+	const aliasSection = el("div", { class: "tag-relation-editor__alias" }, [
+		el("div", { class: "subnote", text: "タグ別名設定（タグDB）" }),
+		el("div", { class: "form-row" }, [el("label", { class: "label", text: "対象タグ" }), aliasTargetPicked, aliasTargetPicker]),
+		el("div", { class: "form-row" }, [
+			el("label", { class: "label", text: "別名（カンマ区切り）" }),
+			aliasInput,
+			aliasCurrent,
+		]),
+		el("div", { class: "tag-relation-editor__actions" }, [saveAliasesBtn]),
+	]);
+
 	root.appendChild(
 		el("div", { class: "tag-relation-editor__grid" }, [
 			el("div", { class: "form-row" }, [el("label", { class: "label", text: "親タグ" }), parentPicked, parentCandidates, parentPicker]),
@@ -1054,21 +1208,29 @@ function createTagRelationEditor({ onTagAdded, getRelatedTagIds = () => [], onRe
 		]),
 	);
 	root.appendChild(el("div", { class: "tag-relation-editor__actions" }, [addRelationBtn]));
+	root.appendChild(aliasSection);
 	return {
 		root,
 		refreshContext: () => {
 			refreshPicked();
+			refreshAliasEditor();
 			parentBinder.renderSuggest();
 			childBinder.renderSuggest();
+			aliasBinder.renderSuggest();
 		},
 		resetSelection: () => {
 			parentTagId = "";
 			childTagId = "";
+			aliasTagId = "";
 			parentInput.value = "";
 			childInput.value = "";
+			aliasTargetInput.value = "";
+			aliasInput.value = "";
 			parentBinder.clearSuggest();
 			childBinder.clearSuggest();
+			aliasBinder.clearSuggest();
 			refreshPicked();
+			refreshAliasEditor();
 		},
 	};
 }
