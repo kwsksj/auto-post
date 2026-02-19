@@ -58,10 +58,24 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .
 
-      - name: Install Japanese fonts
+      - name: Install schedule fonts
         run: |
           sudo apt-get update
-          sudo apt-get install -y fonts-noto-cjk
+          sudo apt-get install -y fonts-zen-kaku-gothic-new fonts-courier-prime || true
+          sudo mkdir -p /usr/local/share/fonts/monthly-schedule
+          if [ ! -f /usr/local/share/fonts/monthly-schedule/ZenKakuGothicNew-Regular.ttf ]; then
+            sudo curl -fsSL https://raw.githubusercontent.com/google/fonts/main/ofl/zenkakugothicnew/ZenKakuGothicNew-Regular.ttf -o /usr/local/share/fonts/monthly-schedule/ZenKakuGothicNew-Regular.ttf
+          fi
+          if [ ! -f /usr/local/share/fonts/monthly-schedule/ZenKakuGothicNew-Bold.ttf ]; then
+            sudo curl -fsSL https://raw.githubusercontent.com/google/fonts/main/ofl/zenkakugothicnew/ZenKakuGothicNew-Bold.ttf -o /usr/local/share/fonts/monthly-schedule/ZenKakuGothicNew-Bold.ttf
+          fi
+          if [ ! -f /usr/local/share/fonts/monthly-schedule/CourierPrime-Regular.ttf ]; then
+            sudo curl -fsSL https://raw.githubusercontent.com/google/fonts/main/ofl/courierprime/CourierPrime-Regular.ttf -o /usr/local/share/fonts/monthly-schedule/CourierPrime-Regular.ttf
+          fi
+          if [ ! -f /usr/local/share/fonts/monthly-schedule/CourierPrime-Bold.ttf ]; then
+            sudo curl -fsSL https://raw.githubusercontent.com/google/fonts/main/ofl/courierprime/CourierPrime-Bold.ttf -o /usr/local/share/fonts/monthly-schedule/CourierPrime-Bold.ttf
+          fi
+          sudo fc-cache -f
 
       - name: Post Monthly Schedule
         env:
@@ -78,6 +92,10 @@ jobs:
           MONTHLY_SCHEDULE_VENUE_PROP: ${{ vars.MONTHLY_SCHEDULE_VENUE_PROP }}
           MONTHLY_SCHEDULE_TARGET: ${{ vars.MONTHLY_SCHEDULE_TARGET }}
           MONTHLY_SCHEDULE_CAPTION_TEMPLATE: ${{ vars.MONTHLY_SCHEDULE_CAPTION_TEMPLATE }}
+          MONTHLY_SCHEDULE_FONT_JP_REGULAR_PATH: /usr/local/share/fonts/monthly-schedule/ZenKakuGothicNew-Regular.ttf
+          MONTHLY_SCHEDULE_FONT_JP_BOLD_PATH: /usr/local/share/fonts/monthly-schedule/ZenKakuGothicNew-Bold.ttf
+          MONTHLY_SCHEDULE_FONT_NUM_REGULAR_PATH: /usr/local/share/fonts/monthly-schedule/CourierPrime-Regular.ttf
+          MONTHLY_SCHEDULE_FONT_NUM_BOLD_PATH: /usr/local/share/fonts/monthly-schedule/CourierPrime-Bold.ttf
 
           # Instagram
           INSTAGRAM_APP_ID: ${{ secrets.INSTAGRAM_APP_ID }}

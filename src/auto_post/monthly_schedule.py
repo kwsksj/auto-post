@@ -5,7 +5,8 @@ from __future__ import annotations
 import calendar
 import logging
 import os
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -38,17 +39,35 @@ WEEKDAY_LABELS = ["月", "火", "水", "木", "金", "土", "日"]
 
 # Classroom colors aligned with reservation app palette.
 CLASSROOM_CARD_STYLES = {
-    "tokyo": {"fill": (254, 242, 242), "border": (254, 202, 202), "text": (185, 28, 28)},
-    "tsukuba": {"fill": (236, 253, 245), "border": (167, 243, 208), "text": (4, 120, 87)},
-    "numazu": {"fill": (240, 249, 255), "border": (186, 230, 253), "text": (3, 105, 161)},
-    "default": {"fill": (249, 250, 251), "border": (229, 231, 235), "text": (75, 85, 99)},
+    "tokyo": {"fill": (236, 136, 141), "text": (255, 255, 255)},
+    "tsukuba": {"fill": (110, 193, 170), "text": (255, 255, 255)},
+    "numazu": {"fill": (110, 176, 221), "text": (255, 255, 255)},
+    "default": {"fill": (166, 176, 189), "text": (255, 255, 255)},
 }
 
 VENUE_BADGE_STYLES = {
-    "浅草橋": {"fill": (255, 247, 237), "border": (254, 215, 170), "text": (194, 65, 12)},
-    "東池袋": {"fill": (253, 244, 255), "border": (245, 208, 254), "text": (162, 28, 175)},
-    "default": {"fill": (249, 250, 251), "border": (229, 231, 235), "text": (75, 85, 99)},
+    "浅草橋": {"fill": (237, 152, 98), "text": (255, 255, 255)},
+    "東池袋": {"fill": (196, 120, 209), "text": (255, 255, 255)},
+    "複数会場": {"fill": (145, 153, 169), "text": (255, 255, 255)},
+    "default": {"fill": (145, 153, 169), "text": (255, 255, 255)},
 }
+
+NIGHT_BADGE_STYLE = {
+    "fill": (57, 84, 152),
+    "text": (255, 255, 255),
+}
+
+ZEN_REGULAR_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/zenkakugothicnew/ZenKakuGothicNew-Regular.ttf"
+ZEN_BOLD_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/zenkakugothicnew/ZenKakuGothicNew-Bold.ttf"
+COURIER_REGULAR_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/courierprime/CourierPrime-Regular.ttf"
+COURIER_BOLD_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/courierprime/CourierPrime-Bold.ttf"
+
+COURIER_ASCENT_OVERRIDE = 0.85
+COURIER_DESCENT_OVERRIDE = 0.15
+COURIER_LINE_GAP_OVERRIDE = 0.0
+COURIER_SIZE_ADJUST = 1.20
+
+ASCII_RUN_RE = re.compile(r"[\x00-\x7F]+")
 
 
 @dataclass(frozen=True)
@@ -61,6 +80,20 @@ class ScheduleEntry:
     venue: str
     start: datetime | None = None
     end: datetime | None = None
+    slot: str = ""
+
+
+@dataclass
+class DayCard:
+    """Grouped card per day/classroom."""
+
+    classroom: str
+    venue: str
+    first_time: str = ""
+    second_time: str = ""
+    beginner_time: str = ""
+    has_night: bool = False
+    other_times: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -96,6 +129,11 @@ class ScheduleRenderConfig:
     width: int = 1536
     height: int = 2048
     font_path: str = ""
+    font_cache_dir: str = ""
+    font_jp_regular_path: str = ""
+    font_jp_bold_path: str = ""
+    font_num_regular_path: str = ""
+    font_num_bold_path: str = ""
 
     @classmethod
     def from_env(cls) -> "ScheduleRenderConfig":
@@ -103,7 +141,32 @@ class ScheduleRenderConfig:
             width=_safe_positive_int(os.environ.get("MONTHLY_SCHEDULE_IMAGE_WIDTH"), 1536),
             height=_safe_positive_int(os.environ.get("MONTHLY_SCHEDULE_IMAGE_HEIGHT"), 2048),
             font_path=os.environ.get("MONTHLY_SCHEDULE_FONT_PATH", "").strip(),
+            font_cache_dir=os.environ.get("MONTHLY_SCHEDULE_FONT_CACHE_DIR", "").strip(),
+            font_jp_regular_path=os.environ.get("MONTHLY_SCHEDULE_FONT_JP_REGULAR_PATH", "").strip(),
+            font_jp_bold_path=os.environ.get("MONTHLY_SCHEDULE_FONT_JP_BOLD_PATH", "").strip(),
+            font_num_regular_path=os.environ.get("MONTHLY_SCHEDULE_FONT_NUM_REGULAR_PATH", "").strip(),
+            font_num_bold_path=os.environ.get("MONTHLY_SCHEDULE_FONT_NUM_BOLD_PATH", "").strip(),
         )
+
+
+@dataclass(frozen=True)
+class ScheduleFontPaths:
+    """Resolved font paths used for rendering."""
+
+    jp_regular: str
+    jp_bold: str
+    num_regular: str
+    num_bold: str
+
+
+@dataclass(frozen=True)
+class ScheduleFontSet:
+    """Pair of Japanese/ASCII fonts at one size."""
+
+    jp_font: ImageFont.ImageFont
+    num_font: ImageFont.ImageFont
+    num_baseline_offset: int = 0
+    num_line_height: int = 0
 
 
 @dataclass(frozen=True)
@@ -204,6 +267,7 @@ class MonthlyScheduleNotionClient:
             venue=venue,
             start=start_dt,
             end=end_dt,
+            slot=_normalize_slot("", title),
         )
 
     def _extract_title(self, props: dict) -> str:
@@ -332,47 +396,39 @@ def render_monthly_schedule_image(
     image = _create_gradient_background(width, height)
     draw = ImageDraw.Draw(image)
 
-    fonts = _resolve_fonts(config.font_path)
-    title_font = _load_font(fonts, size=max(60, width // 22), bold=True)
-    subtitle_font = _load_font(fonts, size=max(26, width // 48), bold=False)
-    weekday_font = _load_font(fonts, size=max(24, width // 56), bold=True)
-    day_font = _load_font(fonts, size=max(28, width // 44), bold=True)
-    classroom_font = _load_font(fonts, size=max(18, width // 78), bold=True)
-    venue_font = _load_font(fonts, size=max(16, width // 88), bold=True)
-    time_font = _load_font(fonts, size=max(17, width // 84), bold=False)
-    hidden_font = _load_font(fonts, size=max(16, width // 92), bold=False)
-    meta_font = _load_font(fonts, size=max(18, width // 82), bold=False)
+    font_paths = _resolve_required_font_paths(config)
+    title_fonts = _load_font_set(font_paths, size=max(72, width // 17), bold=True)
+    month_fonts = _load_font_set(font_paths, size=max(40, width // 32), bold=True)
+    weekday_fonts = _load_font_set(font_paths, size=max(28, width // 50), bold=True)
+    day_fonts = _load_font_set(font_paths, size=max(38, width // 32), bold=True)
+    classroom_fonts = _load_font_set(font_paths, size=max(30, width // 44), bold=True)
+    venue_badge_fonts = _load_font_set(font_paths, size=max(22, width // 62), bold=True)
+    time_fonts = _load_font_set(font_paths, size=max(18, width // 80), bold=True)
+    beginner_label_fonts = _load_font_set(font_paths, size=max(17, width // 82), bold=True)
+    hidden_fonts = _load_font_set(font_paths, size=max(17, width // 82), bold=True)
+    night_badge_fonts = _load_font_set(font_paths, size=max(18, width // 74), bold=True)
 
-    margin = max(56, width // 24)
-    header_h = int(height * 0.2)
-    header_rect = (margin, margin, width - margin, margin + header_h)
-    draw.rounded_rectangle(
-        header_rect,
-        radius=max(22, width // 48),
-        fill=PALETTE["paper"],
-        outline=PALETTE["line"],
-        width=2,
-    )
+    margin = max(44, width // 28)
+    title_text = "川崎誠二 木彫り教室"
+    month_text = f"{year}年 {month}月"
+    title_w = _mixed_text_width(draw, title_text, title_fonts)
+    title_h = _mixed_font_height(draw, title_fonts)
+    month_w = _mixed_text_width(draw, month_text, month_fonts)
+    month_h = _mixed_font_height(draw, month_fonts)
+    header_bottom = margin - 2 + max(title_h, month_h)
+    title_x = margin
+    title_y = header_bottom - title_h
+    month_x = width - margin - month_w
+    min_month_x = title_x + title_w + max(18, width // 72)
+    if month_x < min_month_x:
+        month_x = min_month_x
+    month_y = header_bottom - month_h
 
-    title_text = f"{year}年 {month}月"
-    subtitle_text = "木彫り教室 スケジュール"
-    updated_text = f"更新: {datetime.now(tz=JST).strftime('%Y-%m-%d')}"
-    draw.text((header_rect[0] + 36, header_rect[1] + 28), title_text, fill=PALETTE["ink"], font=title_font)
-    draw.text(
-        (header_rect[0] + 36, header_rect[1] + 38 + _font_height(draw, title_font)),
-        subtitle_text,
-        fill=PALETTE["subtle"],
-        font=subtitle_font,
-    )
-    draw.text(
-        (header_rect[0] + 36, header_rect[3] - _font_height(draw, meta_font) - 22),
-        updated_text,
-        fill=PALETTE["muted"],
-        font=meta_font,
-    )
+    _draw_mixed_text(draw, (title_x, title_y), title_text, title_fonts, fill=PALETTE["ink"])
+    _draw_mixed_text(draw, (month_x, month_y), month_text, month_fonts, fill=PALETTE["subtle"])
 
-    week_top = header_rect[3] + max(28, height // 72)
-    grid_top = week_top + max(44, height // 42)
+    week_top = header_bottom + max(20, height // 78)
+    grid_top = week_top + max(36, height // 48)
     grid_bottom = height - margin
 
     month_matrix = calendar.Calendar(firstweekday=0).monthdayscalendar(year, month)
@@ -387,7 +443,7 @@ def render_monthly_schedule_image(
     for col, label in enumerate(WEEKDAY_LABELS):
         x = margin + col * (cell_width + col_gap)
         y = week_top
-        week_rect = (x, y, x + cell_width, y + max(34, height // 56))
+        week_rect = (x, y, x + cell_width, y + max(26, height // 72))
         fill = PALETTE["paper"]
         text_color = PALETTE["subtle"]
         if col == 5:
@@ -403,7 +459,7 @@ def render_monthly_schedule_image(
             outline=PALETTE["line_light"],
             width=1,
         )
-        _draw_centered_text(draw, week_rect, label, weekday_font, text_color)
+        _draw_centered_mixed_text(draw, week_rect, label, weekday_fonts, text_color)
 
     events_by_day: dict[int, list[ScheduleEntry]] = {}
     for entry in entries:
@@ -431,8 +487,6 @@ def render_monthly_schedule_image(
                 rect,
                 radius=max(14, width // 110),
                 fill=cell_fill,
-                outline=PALETTE["line_light"],
-                width=1,
             )
 
             if day_num == 0:
@@ -444,17 +498,26 @@ def render_monthly_schedule_image(
             elif col_index == 6:
                 day_color = PALETTE["accent"]
 
-            draw.text((x1 + 14, y1 + 10), str(day_num), fill=day_color, font=day_font)
+            _draw_mixed_text(
+                draw,
+                (x1 + 14, y1 + 10),
+                str(day_num),
+                day_fonts,
+                fill=day_color,
+            )
 
             day_events = events_by_day.get(day_num, [])
             _draw_day_events(
                 draw=draw,
                 events=day_events,
                 rect=rect,
-                classroom_font=classroom_font,
-                venue_font=venue_font,
-                time_font=time_font,
-                hidden_font=hidden_font,
+                day_number_height=_mixed_font_height(draw, day_fonts),
+                classroom_fonts=classroom_fonts,
+                venue_badge_fonts=venue_badge_fonts,
+                time_fonts=time_fonts,
+                beginner_label_fonts=beginner_label_fonts,
+                hidden_fonts=hidden_fonts,
+                night_badge_fonts=night_badge_fonts,
                 muted_color=PALETTE["muted"],
             )
 
@@ -499,13 +562,6 @@ def _create_gradient_background(width: int, height: int) -> Image.Image:
         b = int(PALETTE["bg_top"][2] * (1 - t) + PALETTE["bg_bottom"][2] * t)
         draw.line((0, y, width, y), fill=(r, g, b))
 
-    glow_bbox = (
-        int(width * 0.45),
-        int(height * -0.12),
-        int(width * 1.05),
-        int(height * 0.45),
-    )
-    draw.ellipse(glow_bbox, fill=(255, 244, 226))
     return image
 
 
@@ -514,89 +570,172 @@ def _draw_day_events(
     draw: ImageDraw.ImageDraw,
     events: list[ScheduleEntry],
     rect: tuple[int, int, int, int],
-    classroom_font: ImageFont.ImageFont,
-    venue_font: ImageFont.ImageFont,
-    time_font: ImageFont.ImageFont,
-    hidden_font: ImageFont.ImageFont,
+    day_number_height: int,
+    classroom_fonts: ScheduleFontSet,
+    venue_badge_fonts: ScheduleFontSet,
+    time_fonts: ScheduleFontSet,
+    beginner_label_fonts: ScheduleFontSet,
+    hidden_fonts: ScheduleFontSet,
+    night_badge_fonts: ScheduleFontSet,
     muted_color: tuple[int, int, int],
 ) -> None:
     x1, y1, x2, y2 = rect
-    if not events:
+    cards = _build_day_cards(events)
+    if not cards:
         return
 
     start_x = x1 + 8
-    start_y = y1 + max(46, (y2 - y1) // 6)
+    start_y = y1 + max(62, day_number_height + 26)
     max_width = (x2 - x1) - 16
     available_h = max(0, y2 - start_y - 8)
 
-    classroom_h = _font_height(draw, classroom_font)
-    time_h = _font_height(draw, time_font)
-    card_h = max(52, classroom_h + time_h + 20)
+    classroom_h = _mixed_font_height(draw, classroom_fonts)
+    line_h = _mixed_font_height(draw, time_fonts) + 4
+    title_to_time_gap = 10
+    beginner_gap = 8
+    beginner_heading_h = _mixed_font_height(draw, beginner_label_fonts)
+    base_card_h = max(96, classroom_h + title_to_time_gap + line_h * 2 + 26)
+    beginner_extra_h = beginner_gap + beginner_heading_h + line_h
     card_gap = 6
-    slot_h = card_h + card_gap
-    max_cards = max(1, available_h // max(1, slot_h))
 
-    visible_count = min(len(events), max_cards)
-    if len(events) > max_cards and max_cards >= 2:
-        visible_count = max_cards - 1
+    def _take_visible(card_height: int) -> list[DayCard]:
+        slot_h = card_height + card_gap
+        max_cards = max(1, available_h // max(1, slot_h))
+        visible = cards[:max_cards]
+        if not visible and cards:
+            visible = [cards[0]]
+        return visible
+
+    visible_cards = _take_visible(base_card_h)
+    has_beginner_block = any(_build_fixed_time_rows(card)[1] for card in visible_cards)
+    card_h = base_card_h + (beginner_extra_h if has_beginner_block else 0)
+    visible_cards = _take_visible(card_h)
+    has_beginner_block = any(_build_fixed_time_rows(card)[1] for card in visible_cards)
+    card_h = base_card_h + (beginner_extra_h if has_beginner_block else 0)
+    visible_cards = _take_visible(card_h)
+    slot_h = card_h + card_gap
 
     y = start_y
-    for entry in events[:visible_count]:
-        class_style = _get_classroom_card_style(entry.classroom)
-        venue_style = _get_venue_badge_style(entry.venue)
+    for card in visible_cards:
+        lines, beginner_time = _build_fixed_time_rows(card)
+        class_style = _get_classroom_card_style(card.classroom)
         card_rect = (start_x, y, start_x + max_width, y + card_h)
         draw.rounded_rectangle(
             card_rect,
             radius=10,
             fill=class_style["fill"],
-            outline=class_style["border"],
-            width=2,
         )
 
         inner_x = card_rect[0] + 10
         inner_right = card_rect[2] - 10
         class_y = card_rect[1] + 8
 
-        if entry.venue:
-            venue_text = _truncate_text(draw, entry.venue, venue_font, max_width // 2)
-            badge_h = _font_height(draw, venue_font) + 8
-            badge_w = _text_width(draw, venue_text, venue_font) + 16
-            badge_w = min(badge_w, max_width // 2)
-            badge_rect = (card_rect[2] - badge_w - 8, card_rect[1] + 7, card_rect[2] - 8, card_rect[1] + 7 + badge_h)
+        classroom_text = _short_classroom_name(card.classroom) or "未定"
+        venue_badge: tuple[str, dict[str, tuple[int, int, int]], ScheduleFontSet, int, int] | None = None
+        class_right = inner_right
+        if card.venue:
+            venue_style = _get_venue_badge_style(card.venue)
+            max_badge_text_w = max(30, max_width // 2)
+            fit_badge_fonts = _fit_font_set_to_width(draw, card.venue, venue_badge_fonts, max_badge_text_w)
+            badge_pad_top = 1
+            badge_pad_bottom = 4
+            badge_h = _mixed_font_height(draw, fit_badge_fonts) + badge_pad_top + badge_pad_bottom
+            badge_w = _mixed_text_width(draw, card.venue, fit_badge_fonts) + 16
+            badge_w = min(badge_w, max_badge_text_w + 16)
+            class_right = max(inner_x + 12, inner_right - badge_w - 8)
+            venue_badge = (card.venue, venue_style, fit_badge_fonts, badge_w, badge_h)
+
+        class_area_w = max(10, class_right - inner_x)
+        fit_classroom_fonts = _fit_font_set_to_width(draw, classroom_text, classroom_fonts, class_area_w)
+        _draw_mixed_text(draw, (inner_x, class_y), classroom_text, fit_classroom_fonts, fill=class_style["text"])
+        class_h = _mixed_font_height(draw, fit_classroom_fonts)
+        class_bottom = class_y + class_h
+
+        if venue_badge:
+            badge_text, badge_style, fit_badge_fonts, badge_w, badge_h = venue_badge
+            badge_rect = (inner_right - badge_w, class_bottom - badge_h, inner_right, class_bottom)
             draw.rounded_rectangle(
                 badge_rect,
                 radius=8,
-                fill=venue_style["fill"],
-                outline=venue_style["border"],
-                width=1,
+                fill=badge_style["fill"],
             )
-            draw.text((badge_rect[0] + 8, badge_rect[1] + 4), venue_text, fill=venue_style["text"], font=venue_font)
-            inner_right = badge_rect[0] - 8
+            _draw_mixed_text(
+                draw,
+                (badge_rect[0] + 8, badge_rect[1]),
+                badge_text,
+                fit_badge_fonts,
+                fill=badge_style["text"],
+            )
 
-        classroom_text = entry.classroom or "教室未定"
-        classroom_text = _truncate_text(draw, classroom_text, classroom_font, max(10, inner_right - inner_x))
-        draw.text((inner_x, class_y), classroom_text, fill=class_style["text"], font=classroom_font)
+        night_time_indexes = _resolve_night_time_line_indexes(card, lines)
+        line_y = class_y + class_h + title_to_time_gap
+        for index, value in enumerate(lines):
+            line_x = inner_x
+            line_area_w = max(10, inner_right - line_x)
+            if value and index in night_time_indexes:
+                badge_text = "夜"
+                fit_night_fonts = _fit_font_set_to_width(draw, badge_text, night_badge_fonts, max(16, line_area_w // 3))
+                night_pad_top = 1
+                night_pad_bottom = 4
+                night_badge_h = _mixed_font_height(draw, fit_night_fonts) + night_pad_top + night_pad_bottom
+                night_badge_w = _mixed_text_width(draw, badge_text, fit_night_fonts) + 12
+                night_y = line_y + max(0, (line_h - night_badge_h) // 2)
+                night_rect = (line_x, night_y, line_x + night_badge_w, night_y + night_badge_h)
+                draw.rounded_rectangle(night_rect, radius=7, fill=NIGHT_BADGE_STYLE["fill"])
+                _draw_mixed_text(
+                    draw,
+                    (night_rect[0] + 6, night_rect[1]),
+                    badge_text,
+                    fit_night_fonts,
+                    fill=NIGHT_BADGE_STYLE["text"],
+                )
+                line_x = night_rect[2] + 6
+                line_area_w = max(10, inner_right - line_x)
 
-        time_text = _format_time_range(entry)
-        time_y = card_rect[3] - _font_height(draw, time_font) - 8
-        draw.text((inner_x, time_y), time_text, fill=class_style["text"], font=time_font)
+            if value:
+                fit_line_fonts = _fit_font_set_to_width(draw, value, time_fonts, line_area_w)
+                _draw_mixed_text(
+                    draw,
+                    (line_x, line_y),
+                    value,
+                    fit_line_fonts,
+                    fill=class_style["text"],
+                )
+            line_y += line_h
+
+        if has_beginner_block:
+            line_y += beginner_gap
+            if beginner_time:
+                beginner_title = "はじめての方"
+                fit_beginner_title_fonts = _fit_font_set_to_width(draw, beginner_title, beginner_label_fonts, max(10, inner_right - inner_x))
+                _draw_mixed_text(
+                    draw,
+                    (inner_x, line_y),
+                    beginner_title,
+                    fit_beginner_title_fonts,
+                    fill=class_style["text"],
+                )
+                line_y += line_h
+                fit_beginner_time_fonts = _fit_font_set_to_width(draw, beginner_time, time_fonts, max(10, inner_right - inner_x))
+                _draw_mixed_text(
+                    draw,
+                    (inner_x, line_y),
+                    beginner_time,
+                    fit_beginner_time_fonts,
+                    fill=class_style["text"],
+                )
         y += slot_h
 
     hidden_y = y - 2
-    hidden_count = len(events) - visible_count
+    hidden_count = len(cards) - len(visible_cards)
     if hidden_count > 0:
-        draw.text((start_x + 4, hidden_y), f"+{hidden_count}件", fill=muted_color, font=hidden_font)
-
-
-def _format_event_line(entry: ScheduleEntry) -> str:
-    time_part = entry.start.strftime("%H:%M") if entry.start else ""
-    classroom_part = _short_classroom_name(entry.classroom)
-    venue_part = f"({entry.venue})" if entry.venue else ""
-
-    pieces = [piece for piece in [time_part, classroom_part, venue_part, entry.title] if piece]
-    if pieces:
-        return " ".join(pieces)
-    return "予定あり"
+        _draw_mixed_text(
+            draw,
+            (start_x + 4, hidden_y),
+            f"+{hidden_count}件",
+            hidden_fonts,
+            fill=muted_color,
+        )
 
 
 def _short_classroom_name(value: str) -> str:
@@ -604,15 +743,219 @@ def _short_classroom_name(value: str) -> str:
 
 
 def _format_time_range(entry: ScheduleEntry) -> str:
-    start_text = entry.start.strftime("%H:%M") if entry.start else ""
-    end_text = entry.end.strftime("%H:%M") if entry.end else ""
+    start_text = _format_clock(entry.start)
+    end_text = _format_clock(entry.end)
     if start_text and end_text:
-        return f"{start_text} - {end_text}"
+        return f"{start_text}~{end_text}"
     if start_text:
-        return f"{start_text} -"
+        return f"{start_text}~"
     if end_text:
-        return f"- {end_text}"
+        return f"~{end_text}"
     return "時間未定"
+
+
+def _format_clock(value: datetime | None) -> str:
+    if value is None:
+        return ""
+    return f"{value.hour:2d}:{value.minute:02d}"
+
+
+def _expand_time_values(value: str) -> list[str]:
+    text = str(value or "")
+    if not text.strip():
+        return []
+    return [item.rstrip() for item in text.split(" / ") if item.strip()]
+
+
+def _build_fixed_time_rows(card: DayCard) -> tuple[list[str], str]:
+    values: list[str] = []
+    for raw in [card.first_time, card.second_time]:
+        values.extend(_expand_time_values(raw))
+    beginner_values = _expand_time_values(card.beginner_time)
+
+    if not values and not beginner_values:
+        return ["時間未定", ""], ""
+
+    morning: list[str] = []
+    afternoon: list[str] = []
+    unknown: list[str] = []
+    for value in values:
+        hour = _extract_start_hour_from_time_text(value)
+        if hour is None:
+            unknown.append(value)
+        elif hour < 12:
+            morning.append(value)
+        else:
+            afternoon.append(value)
+
+    line1 = morning[0] if morning else ""
+    line2 = afternoon[0] if afternoon else ""
+    if not line1 and unknown:
+        line1 = unknown[0]
+    if not line2 and len(unknown) >= 2:
+        line2 = unknown[1]
+    beginner_time = beginner_values[0] if beginner_values else ""
+    return [line1, line2], beginner_time
+
+
+def _extract_start_hour_from_time_text(value: str) -> int | None:
+    text = str(value or "")
+    for token in text.replace("~", " ").split():
+        if ":" not in token:
+            continue
+        try:
+            hour = int(token.split(":", 1)[0])
+        except ValueError:
+            continue
+        if 0 <= hour <= 23:
+            return hour
+    return None
+
+
+def _build_day_cards(events: list[ScheduleEntry]) -> list[DayCard]:
+    by_key: dict[str, DayCard] = {}
+
+    for entry in sorted(events, key=_entry_sort_key):
+        classroom = (entry.classroom or "").strip()
+        venue = (entry.venue or "").strip()
+        key = classroom or "未定"
+        card = by_key.get(key)
+        if card is None:
+            card = DayCard(classroom=classroom, venue=venue)
+            by_key[key] = card
+        elif venue:
+            if not card.venue:
+                card.venue = venue
+            elif card.venue != venue and card.venue != "複数会場":
+                card.venue = "複数会場"
+
+        time_text = _format_time_range(entry)
+        slot = _normalize_slot(entry.slot, entry.title)
+        if slot == "first":
+            card.first_time = _merge_time_text(card.first_time, time_text)
+        elif slot == "second":
+            card.second_time = _merge_time_text(card.second_time, time_text)
+        elif slot == "beginner":
+            card.beginner_time = _merge_time_text(card.beginner_time, time_text)
+        elif time_text and time_text not in card.other_times:
+            card.other_times.append(time_text)
+
+        if _is_night_entry(entry):
+            card.has_night = True
+
+    cards = list(by_key.values())
+    for card in cards:
+        for time_text in card.other_times:
+            if not card.first_time:
+                card.first_time = time_text
+            elif not card.second_time and time_text != card.first_time:
+                card.second_time = time_text
+            elif not card.beginner_time and time_text not in {card.first_time, card.second_time}:
+                card.beginner_time = time_text
+
+    def _card_sort_key(card: DayCard) -> tuple[int, str]:
+        first = card.first_time or card.second_time or card.beginner_time
+        return (_time_text_to_sort_key(first), card.classroom)
+
+    cards.sort(key=_card_sort_key)
+    return cards
+
+
+def _normalize_slot(slot: str, title: str = "") -> str:
+    value = (slot or "").strip().lower()
+    title_value = (title or "").strip()
+
+    # Prefer explicit slot value from JSON over title text.
+    if any(token in value for token in ["beginner", "初回", "はじめて"]):
+        return "beginner"
+    if any(token in value for token in ["second", "2部", "第2", "二部"]):
+        return "second"
+    if any(token in value for token in ["first", "1部", "第1", "一部"]):
+        return "first"
+
+    combined = title_value
+    if any(token in combined for token in ["初回", "はじめて"]):
+        return "beginner"
+    if any(token in combined for token in ["2部", "第2", "二部"]):
+        return "second"
+    if any(token in combined for token in ["1部", "第1", "一部"]):
+        return "first"
+    return ""
+
+
+def _merge_time_text(existing: str, new_text: str) -> str:
+    if not new_text:
+        return existing
+    if not existing:
+        return new_text
+    values = [value.rstrip() for value in existing.split(" / ") if value.strip()]
+    normalized_new = new_text.rstrip()
+    if normalized_new in values:
+        return existing
+    return f"{existing} / {new_text}"
+
+
+def _time_text_to_sort_key(time_text: str) -> int:
+    value = (time_text or "").strip()
+    if not value:
+        return 10_000
+    for token in value.replace(" - ", " ").replace("-", " ").replace("~", " ").split():
+        if ":" not in token:
+            continue
+        try:
+            hour_str, minute_str = token.split(":", 1)
+            hour = int(hour_str)
+            minute = int(minute_str)
+            if 0 <= hour <= 23 and 0 <= minute <= 59:
+                return hour * 60 + minute
+        except ValueError:
+            continue
+    return 10_000
+
+
+def _is_night_entry(entry: ScheduleEntry) -> bool:
+    if entry.start and entry.start.hour >= 17:
+        return True
+    if entry.end and entry.end.hour >= 20:
+        return True
+    slot_text = (entry.slot or "").strip().lower()
+    if "night" in slot_text or "夜" in slot_text:
+        return True
+    title = (entry.title or "").strip()
+    if "夜" in title:
+        return True
+    return False
+
+
+def _resolve_night_time_line_indexes(
+    card: DayCard,
+    lines: list[str],
+) -> set[int]:
+    if not card.has_night:
+        return set()
+
+    explicit = {index for index, value in enumerate(lines) if value and _is_night_time_text(value)}
+    if explicit:
+        return explicit
+
+    if len(lines) >= 2 and lines[1]:
+        return {1}
+    if lines and lines[0]:
+        return {0}
+    return set()
+
+
+def _is_night_time_text(value: str) -> bool:
+    for token in str(value or "").replace("~", " ").split():
+        if ":" not in token:
+            continue
+        try:
+            hour = int(token.split(":", 1)[0])
+        except ValueError:
+            continue
+        if 0 <= hour <= 23:
+            return hour >= 17
+    return False
 
 
 def _get_classroom_card_style(classroom: str) -> dict[str, tuple[int, int, int]]:
@@ -633,58 +976,224 @@ def _get_venue_badge_style(venue: str) -> dict[str, tuple[int, int, int]]:
     return VENUE_BADGE_STYLES["default"]
 
 
-def _resolve_fonts(font_path: str) -> dict[str, list[str]]:
-    regular_candidates = []
-    bold_candidates = []
+def _resolve_required_font_paths(config: ScheduleRenderConfig) -> ScheduleFontPaths:
+    cache_dir = Path(config.font_cache_dir).expanduser() if config.font_cache_dir else Path.home() / ".cache" / "media-platform-fonts" / "monthly_schedule"
+    cache_dir.mkdir(parents=True, exist_ok=True)
 
-    if font_path:
-        regular_candidates.append(font_path)
-        bold_candidates.append(font_path)
+    base_path = Path(config.font_path).expanduser() if config.font_path else None
+    base_files: dict[str, str] = {}
+    if base_path:
+        if base_path.is_file():
+            for key in ["jp_regular", "jp_bold", "num_regular", "num_bold"]:
+                base_files[key] = str(base_path)
+        elif base_path.is_dir():
+            base_files = {
+                "jp_regular": str(base_path / "ZenKakuGothicNew-Regular.ttf"),
+                "jp_bold": str(base_path / "ZenKakuGothicNew-Bold.ttf"),
+                "num_regular": str(base_path / "CourierPrime-Regular.ttf"),
+                "num_bold": str(base_path / "CourierPrime-Bold.ttf"),
+            }
 
-    regular_candidates.extend(
-        [
-            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-            "/System/Library/Fonts/ヒラギノ角ゴシック W4.ttc",
-            "/System/Library/Fonts/Hiragino Sans GB.ttc",
-        ]
+    jp_regular = _resolve_single_font(
+        label="Zen Kaku Gothic New Regular",
+        explicit=config.font_jp_regular_path,
+        candidates=[
+            base_files.get("jp_regular", ""),
+            str(cache_dir / "ZenKakuGothicNew-Regular.ttf"),
+            "/usr/share/fonts/truetype/zen-kaku-gothic-new/ZenKakuGothicNew-Regular.ttf",
+            "/usr/share/fonts/truetype/zenkakugothicnew/ZenKakuGothicNew-Regular.ttf",
+            "/usr/local/share/fonts/ZenKakuGothicNew-Regular.ttf",
+            str(Path.home() / ".local/share/fonts/ZenKakuGothicNew-Regular.ttf"),
+            str(Path.home() / "Library/Fonts/ZenKakuGothicNew-Regular.ttf"),
+        ],
+        download_url=ZEN_REGULAR_URL,
+        download_path=cache_dir / "ZenKakuGothicNew-Regular.ttf",
     )
-    bold_candidates.extend(
-        [
-            "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
-            "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
-            "/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc",
-            "/System/Library/Fonts/Hiragino Sans GB.ttc",
-        ]
+    jp_bold = _resolve_single_font(
+        label="Zen Kaku Gothic New Bold",
+        explicit=config.font_jp_bold_path,
+        candidates=[
+            base_files.get("jp_bold", ""),
+            str(cache_dir / "ZenKakuGothicNew-Bold.ttf"),
+            "/usr/share/fonts/truetype/zen-kaku-gothic-new/ZenKakuGothicNew-Bold.ttf",
+            "/usr/share/fonts/truetype/zenkakugothicnew/ZenKakuGothicNew-Bold.ttf",
+            "/usr/local/share/fonts/ZenKakuGothicNew-Bold.ttf",
+            str(Path.home() / ".local/share/fonts/ZenKakuGothicNew-Bold.ttf"),
+            str(Path.home() / "Library/Fonts/ZenKakuGothicNew-Bold.ttf"),
+        ],
+        download_url=ZEN_BOLD_URL,
+        download_path=cache_dir / "ZenKakuGothicNew-Bold.ttf",
     )
-    return {"regular": regular_candidates, "bold": bold_candidates}
+    num_regular = _resolve_single_font(
+        label="Courier Prime Regular",
+        explicit=config.font_num_regular_path,
+        candidates=[
+            base_files.get("num_regular", ""),
+            str(cache_dir / "CourierPrime-Regular.ttf"),
+            "/usr/share/fonts/truetype/courier-prime/CourierPrime-Regular.ttf",
+            "/usr/share/fonts/truetype/courierprime/CourierPrime-Regular.ttf",
+            "/usr/local/share/fonts/CourierPrime-Regular.ttf",
+            str(Path.home() / ".local/share/fonts/CourierPrime-Regular.ttf"),
+            str(Path.home() / "Library/Fonts/CourierPrime-Regular.ttf"),
+        ],
+        download_url=COURIER_REGULAR_URL,
+        download_path=cache_dir / "CourierPrime-Regular.ttf",
+    )
+    num_bold = _resolve_single_font(
+        label="Courier Prime Bold",
+        explicit=config.font_num_bold_path,
+        candidates=[
+            base_files.get("num_bold", ""),
+            str(cache_dir / "CourierPrime-Bold.ttf"),
+            "/usr/share/fonts/truetype/courier-prime/CourierPrime-Bold.ttf",
+            "/usr/share/fonts/truetype/courierprime/CourierPrime-Bold.ttf",
+            "/usr/local/share/fonts/CourierPrime-Bold.ttf",
+            str(Path.home() / ".local/share/fonts/CourierPrime-Bold.ttf"),
+            str(Path.home() / "Library/Fonts/CourierPrime-Bold.ttf"),
+        ],
+        download_url=COURIER_BOLD_URL,
+        download_path=cache_dir / "CourierPrime-Bold.ttf",
+    )
+    return ScheduleFontPaths(
+        jp_regular=jp_regular,
+        jp_bold=jp_bold,
+        num_regular=num_regular,
+        num_bold=num_bold,
+    )
 
 
-def _load_font(candidates: dict[str, list[str]], size: int, *, bold: bool) -> ImageFont.ImageFont:
-    key = "bold" if bold else "regular"
-    for candidate in candidates[key]:
-        if not candidate:
+def _resolve_single_font(
+    *,
+    label: str,
+    explicit: str,
+    candidates: list[str],
+    download_url: str,
+    download_path: Path,
+) -> str:
+    checked: list[str] = []
+    for candidate in [explicit, *candidates]:
+        value = str(candidate or "").strip()
+        if not value:
             continue
-        try:
-            return ImageFont.truetype(candidate, size=size)
-        except Exception:
-            continue
-    return ImageFont.load_default()
+        checked.append(value)
+        if _is_valid_font_path(value):
+            return value
+
+    try:
+        _download_font(download_url, download_path)
+    except Exception as e:
+        logger.warning("failed to download %s: %s", label, e)
+    if _is_valid_font_path(str(download_path)):
+        return str(download_path)
+
+    checked_text = ", ".join(checked) if checked else "(none)"
+    raise RuntimeError(f"{label} not found. checked={checked_text}")
 
 
-def _draw_centered_text(
+def _download_font(url: str, target: Path) -> None:
+    import requests
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    response = requests.get(url, timeout=30)
+    response.raise_for_status()
+    body = response.content
+    if not body:
+        raise RuntimeError(f"empty response from {url}")
+    temp = target.with_suffix(f"{target.suffix}.tmp")
+    temp.write_bytes(body)
+    temp.replace(target)
+
+
+def _is_valid_font_path(path: str) -> bool:
+    try:
+        p = Path(path).expanduser()
+    except Exception:
+        return False
+    if not p.exists() or not p.is_file():
+        return False
+    try:
+        ImageFont.truetype(str(p), size=24)
+    except Exception:
+        return False
+    return True
+
+
+def _load_font_set(paths: ScheduleFontPaths, size: int, *, bold: bool) -> ScheduleFontSet:
+    jp_path = paths.jp_bold if bold else paths.jp_regular
+    num_path = paths.num_bold if bold else paths.num_regular
+    jp_font = ImageFont.truetype(jp_path, size=size)
+    num_size = max(1, int(round(size * COURIER_SIZE_ADJUST)))
+    num_font = ImageFont.truetype(num_path, size=num_size)
+    num_ascent, _ = num_font.getmetrics()
+    target_ascent = max(1, int(round(num_size * COURIER_ASCENT_OVERRIDE)))
+    target_descent = max(1, int(round(num_size * COURIER_DESCENT_OVERRIDE)))
+    target_line_gap = max(0, int(round(num_size * COURIER_LINE_GAP_OVERRIDE)))
+    target_line_height = max(1, target_ascent + target_descent + target_line_gap)
+    base_offset = target_ascent - num_ascent
+    jp_top = jp_font.getbbox("Ag")[1]
+    num_top = num_font.getbbox("09:00")[1]
+    optical_offset = jp_top - num_top
+    return ScheduleFontSet(
+        jp_font=jp_font,
+        num_font=num_font,
+        num_baseline_offset=max(0, base_offset, optical_offset),
+        num_line_height=target_line_height,
+    )
+
+
+def _draw_centered_mixed_text(
     draw: ImageDraw.ImageDraw,
     rect: tuple[int, int, int, int],
     text: str,
-    font: ImageFont.ImageFont,
+    fonts: ScheduleFontSet,
     color: tuple[int, int, int],
 ) -> None:
     x1, y1, x2, y2 = rect
-    w = _text_width(draw, text, font)
-    h = _font_height(draw, font)
+    w = _mixed_text_width(draw, text, fonts)
+    h = _mixed_font_height(draw, fonts)
     x = x1 + ((x2 - x1) - w) / 2
     y = y1 + ((y2 - y1) - h) / 2
-    draw.text((x, y), text, font=font, fill=color)
+    _draw_mixed_text(draw, (x, y), text, fonts, fill=color)
+
+
+def _draw_mixed_text(
+    draw: ImageDraw.ImageDraw,
+    xy: tuple[float, float],
+    text: str,
+    fonts: ScheduleFontSet,
+    *,
+    fill: tuple[int, int, int],
+) -> None:
+    x, y = xy
+    for chunk, is_ascii in _split_text_runs(text):
+        font = fonts.num_font if is_ascii else fonts.jp_font
+        y_pos = y + fonts.num_baseline_offset if is_ascii else y
+        draw.text((x, y_pos), chunk, font=font, fill=fill)
+        x += _text_width(draw, chunk, font)
+
+
+def _split_text_runs(text: str) -> list[tuple[str, bool]]:
+    value = str(text or "")
+    if not value:
+        return []
+    runs: list[tuple[str, bool]] = []
+    current = [value[0]]
+    current_ascii = _is_ascii_char(value[0])
+
+    for ch in value[1:]:
+        is_ascii = _is_ascii_char(ch)
+        if is_ascii == current_ascii:
+            current.append(ch)
+            continue
+        runs.append(("".join(current), current_ascii))
+        current = [ch]
+        current_ascii = is_ascii
+    runs.append(("".join(current), current_ascii))
+    return runs
+
+
+def _is_ascii_char(ch: str) -> bool:
+    return bool(ASCII_RUN_RE.fullmatch(ch))
 
 
 def _text_width(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont) -> int:
@@ -697,18 +1206,74 @@ def _font_height(draw: ImageDraw.ImageDraw, font: ImageFont.ImageFont) -> int:
     return max(1, bottom - top)
 
 
-def _truncate_text(
+def _mixed_text_width(draw: ImageDraw.ImageDraw, text: str, fonts: ScheduleFontSet) -> int:
+    width = 0
+    for chunk, is_ascii in _split_text_runs(text):
+        font = fonts.num_font if is_ascii else fonts.jp_font
+        width += _text_width(draw, chunk, font)
+    return width
+
+
+def _mixed_font_height(draw: ImageDraw.ImageDraw, fonts: ScheduleFontSet) -> int:
+    num_h = fonts.num_line_height if fonts.num_line_height > 0 else _font_height(draw, fonts.num_font)
+    return max(_font_height(draw, fonts.jp_font), num_h)
+
+
+def _scale_font_set(fonts: ScheduleFontSet, scale: float) -> ScheduleFontSet:
+    if scale >= 0.999:
+        return fonts
+    try:
+        jp_size = max(1, int(round(float(getattr(fonts.jp_font, "size")) * scale)))
+        num_size = max(1, int(round(float(getattr(fonts.num_font, "size")) * scale)))
+        jp_font = fonts.jp_font.font_variant(size=jp_size)
+        num_font = fonts.num_font.font_variant(size=num_size)
+    except Exception:
+        return fonts
+    num_offset = int(round(fonts.num_baseline_offset * scale))
+    base_num_h = fonts.num_line_height if fonts.num_line_height > 0 else _font_height(ImageDraw.Draw(Image.new("RGB", (10, 10))), fonts.num_font)
+    num_line_h = max(1, int(round(base_num_h * scale)))
+    return ScheduleFontSet(
+        jp_font=jp_font,
+        num_font=num_font,
+        num_baseline_offset=num_offset,
+        num_line_height=num_line_h,
+    )
+
+
+def _fit_font_set_to_width(
     draw: ImageDraw.ImageDraw,
     text: str,
-    font: ImageFont.ImageFont,
+    fonts: ScheduleFontSet,
+    max_width: int,
+    min_scale: float = 0.62,
+) -> ScheduleFontSet:
+    if _mixed_text_width(draw, text, fonts) <= max_width:
+        return fonts
+    scale = 0.96
+    fitted = fonts
+    while scale >= min_scale:
+        candidate = _scale_font_set(fonts, scale)
+        if candidate is fonts and scale < 0.95:
+            break
+        fitted = candidate
+        if _mixed_text_width(draw, text, candidate) <= max_width:
+            return candidate
+        scale -= 0.04
+    return fitted
+
+
+def _truncate_mixed_text(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    fonts: ScheduleFontSet,
     max_width: int,
 ) -> str:
-    if _text_width(draw, text, font) <= max_width:
+    if _mixed_text_width(draw, text, fonts) <= max_width:
         return text
     ellipsis = "…"
     for end in range(len(text), 0, -1):
         candidate = text[:end].rstrip() + ellipsis
-        if _text_width(draw, candidate, font) <= max_width:
+        if _mixed_text_width(draw, candidate, fonts) <= max_width:
             return candidate
     return ellipsis
 
@@ -790,11 +1355,12 @@ def _build_entry_from_dict(
         title = "レッスン"
         classroom = ""
         venue = ""
-        return ScheduleEntry(day=day, title=title, classroom=classroom, venue=venue)
+        return ScheduleEntry(day=day, title=title, classroom=classroom, venue=venue, slot="")
 
     classroom = _pick_text(item, ["classroom", "classroom_name", "studio", "教室"])
     venue = _pick_text(item, ["venue", "venue_name", "会場", "location"])
     title = _pick_text(item, ["title", "name", "label", "event_name", "lesson_name", "lesson", "type"])
+    slot = _pick_text(item, ["slot", "time_slot", "part", "部", "時間帯"])
 
     if not title:
         participants = item.get("participants")
@@ -862,6 +1428,7 @@ def _build_entry_from_dict(
         venue=venue,
         start=start_dt,
         end=end_dt,
+        slot=slot,
     )
 
 

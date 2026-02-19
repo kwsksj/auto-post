@@ -290,9 +290,14 @@ GitHub リポジトリ → Settings → Secrets and variables → Actions
 | `NOTION_DATABASE_ID`            | データベースID                  |
 | `MONTHLY_SCHEDULE_JSON_KEY`（Variable推奨） | 月次日程JSONのR2キー（例: `schedule_index.json`） |
 | `MONTHLY_SCHEDULE_SOURCE`（Variable推奨） | `r2-json`（既定）/ `json` / `notion` |
+| `MONTHLY_SCHEDULE_FONT_JP_REGULAR_PATH`（Variable任意） | `ZenKakuGothicNew-Regular.ttf` の絶対パス |
+| `MONTHLY_SCHEDULE_FONT_JP_BOLD_PATH`（Variable任意） | `ZenKakuGothicNew-Bold.ttf` の絶対パス |
+| `MONTHLY_SCHEDULE_FONT_NUM_REGULAR_PATH`（Variable任意） | `CourierPrime-Regular.ttf` の絶対パス |
+| `MONTHLY_SCHEDULE_FONT_NUM_BOLD_PATH`（Variable任意） | `CourierPrime-Bold.ttf` の絶対パス |
 
 ※ Threads App ID/Secret は Instagram と同じ Meta アプリを使用する場合、`INSTAGRAM_APP_ID`/`INSTAGRAM_APP_SECRET` と同じ値になります。
 ※ 月次日程投稿は既定で R2 JSON を参照します。URL配信で運用する場合は `MONTHLY_SCHEDULE_JSON_URL`（Variable）を設定し、Notion直読みへ切り替える場合のみ `MONTHLY_SCHEDULE_SOURCE=notion` と `MONTHLY_SCHEDULE_NOTION_DATABASE_ID` を設定してください。
+※ フォント変数を未設定でも、実行時に Zen Kaku Gothic New / Courier Prime をシステムフォントまたは自動ダウンロード（`~/.cache/media-platform-fonts/monthly_schedule`）から解決します。
 
 ローカル `.env` のキー有無チェックは以下で実施できます:
 

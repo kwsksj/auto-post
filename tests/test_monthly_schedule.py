@@ -3,9 +3,16 @@
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
+from PIL import ImageFont
+
+import auto_post.monthly_schedule as monthly_schedule
 from auto_post.monthly_schedule import (
     ScheduleEntry,
+    ScheduleFontPaths,
+    ScheduleFontSet,
     ScheduleRenderConfig,
+    _build_day_cards,
+    _expand_time_values,
     build_monthly_caption,
     extract_month_entries_from_json,
     render_monthly_schedule_image,
@@ -36,7 +43,26 @@ def test_build_monthly_caption_defaults():
     assert "#教室日程" in caption
 
 
-def test_render_monthly_schedule_image_size():
+def test_render_monthly_schedule_image_size(monkeypatch):
+    monkeypatch.setattr(
+        monthly_schedule,
+        "_resolve_required_font_paths",
+        lambda config: ScheduleFontPaths(
+            jp_regular="dummy",
+            jp_bold="dummy",
+            num_regular="dummy",
+            num_bold="dummy",
+        ),
+    )
+    monkeypatch.setattr(
+        monthly_schedule,
+        "_load_font_set",
+        lambda paths, size, bold: ScheduleFontSet(
+            jp_font=ImageFont.load_default(),
+            num_font=ImageFont.load_default(),
+        ),
+    )
+
     entries = [
         ScheduleEntry(
             day=date(2026, 3, 5),
@@ -128,3 +154,64 @@ def test_extract_month_entries_supports_sheet_time_keys():
     assert entries[0].venue == "東池袋"
     assert entries[0].start and entries[0].start.hour == 9 and entries[0].start.minute == 30
     assert entries[0].end and entries[0].end.hour == 12
+
+
+def test_build_day_cards_merges_same_classroom_slots():
+    entries = [
+        ScheduleEntry(
+            day=date(2026, 3, 1),
+            title="",
+            classroom="東京教室",
+            venue="浅草橋",
+            start=datetime(2026, 3, 1, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo")),
+            end=datetime(2026, 3, 1, 16, 0, tzinfo=ZoneInfo("Asia/Tokyo")),
+            slot="first",
+        ),
+        ScheduleEntry(
+            day=date(2026, 3, 1),
+            title="",
+            classroom="東京教室",
+            venue="浅草橋",
+            start=datetime(2026, 3, 1, 17, 30, tzinfo=ZoneInfo("Asia/Tokyo")),
+            end=datetime(2026, 3, 1, 20, 0, tzinfo=ZoneInfo("Asia/Tokyo")),
+            slot="second",
+        ),
+        ScheduleEntry(
+            day=date(2026, 3, 1),
+            title="",
+            classroom="東京教室",
+            venue="浅草橋",
+            start=datetime(2026, 3, 1, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo")),
+            end=datetime(2026, 3, 1, 14, 0, tzinfo=ZoneInfo("Asia/Tokyo")),
+            slot="beginner",
+        ),
+    ]
+    cards = _build_day_cards(entries)
+    assert len(cards) == 1
+    card = cards[0]
+    assert card.classroom == "東京教室"
+    assert card.first_time == "12:00~16:00"
+    assert card.second_time == "17:30~20:00"
+    assert card.beginner_time == "12:00~14:00"
+    assert card.has_night is True
+
+
+def test_build_day_cards_formats_single_digit_hour_with_leading_space():
+    entries = [
+        ScheduleEntry(
+            day=date(2026, 3, 3),
+            title="",
+            classroom="つくば教室",
+            venue="つくば",
+            start=datetime(2026, 3, 3, 9, 0, tzinfo=ZoneInfo("Asia/Tokyo")),
+            end=datetime(2026, 3, 3, 13, 0, tzinfo=ZoneInfo("Asia/Tokyo")),
+            slot="first",
+        )
+    ]
+    cards = _build_day_cards(entries)
+    assert len(cards) == 1
+    assert cards[0].first_time == " 9:00~13:00"
+
+
+def test_expand_time_values_preserves_leading_space_for_alignment():
+    assert _expand_time_values(" 9:00~13:00 / 14:00~17:00") == [" 9:00~13:00", "14:00~17:00"]
