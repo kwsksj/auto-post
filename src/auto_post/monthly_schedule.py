@@ -36,6 +36,20 @@ PALETTE = {
 
 WEEKDAY_LABELS = ["月", "火", "水", "木", "金", "土", "日"]
 
+# Classroom colors aligned with reservation app palette.
+CLASSROOM_CARD_STYLES = {
+    "tokyo": {"fill": (254, 242, 242), "border": (254, 202, 202), "text": (185, 28, 28)},
+    "tsukuba": {"fill": (236, 253, 245), "border": (167, 243, 208), "text": (4, 120, 87)},
+    "numazu": {"fill": (240, 249, 255), "border": (186, 230, 253), "text": (3, 105, 161)},
+    "default": {"fill": (249, 250, 251), "border": (229, 231, 235), "text": (75, 85, 99)},
+}
+
+VENUE_BADGE_STYLES = {
+    "浅草橋": {"fill": (255, 247, 237), "border": (254, 215, 170), "text": (194, 65, 12)},
+    "東池袋": {"fill": (253, 244, 255), "border": (245, 208, 254), "text": (162, 28, 175)},
+    "default": {"fill": (249, 250, 251), "border": (229, 231, 235), "text": (75, 85, 99)},
+}
+
 
 @dataclass(frozen=True)
 class ScheduleEntry:
@@ -267,8 +281,12 @@ def extract_month_entries_from_json(
     """Extract month entries from schedule JSON."""
     tz = ZoneInfo(timezone)
     out: list[ScheduleEntry] = []
+    payload = data
+    wrapped = data.get("data")
+    if isinstance(wrapped, dict):
+        payload = wrapped
 
-    dates = data.get("dates")
+    dates = payload.get("dates")
     if isinstance(dates, dict):
         for raw_date, groups in dates.items():
             day = _parse_date_ymd(raw_date)
@@ -287,7 +305,7 @@ def extract_month_entries_from_json(
     if not out:
         list_keys = ["entries", "schedules", "lessons", "items"]
         for key in list_keys:
-            values = data.get(key)
+            values = payload.get(key)
             if not isinstance(values, list):
                 continue
             for item in values:
@@ -319,7 +337,10 @@ def render_monthly_schedule_image(
     subtitle_font = _load_font(fonts, size=max(26, width // 48), bold=False)
     weekday_font = _load_font(fonts, size=max(24, width // 56), bold=True)
     day_font = _load_font(fonts, size=max(28, width // 44), bold=True)
-    item_font = _load_font(fonts, size=max(19, width // 77), bold=False)
+    classroom_font = _load_font(fonts, size=max(18, width // 78), bold=True)
+    venue_font = _load_font(fonts, size=max(16, width // 88), bold=True)
+    time_font = _load_font(fonts, size=max(17, width // 84), bold=False)
+    hidden_font = _load_font(fonts, size=max(16, width // 92), bold=False)
     meta_font = _load_font(fonts, size=max(18, width // 82), bold=False)
 
     margin = max(56, width // 24)
@@ -430,8 +451,10 @@ def render_monthly_schedule_image(
                 draw=draw,
                 events=day_events,
                 rect=rect,
-                font=item_font,
-                text_color=PALETTE["subtle"],
+                classroom_font=classroom_font,
+                venue_font=venue_font,
+                time_font=time_font,
+                hidden_font=hidden_font,
                 muted_color=PALETTE["muted"],
             )
 
@@ -491,35 +514,78 @@ def _draw_day_events(
     draw: ImageDraw.ImageDraw,
     events: list[ScheduleEntry],
     rect: tuple[int, int, int, int],
-    font: ImageFont.ImageFont,
-    text_color: tuple[int, int, int],
+    classroom_font: ImageFont.ImageFont,
+    venue_font: ImageFont.ImageFont,
+    time_font: ImageFont.ImageFont,
+    hidden_font: ImageFont.ImageFont,
     muted_color: tuple[int, int, int],
 ) -> None:
     x1, y1, x2, y2 = rect
-    start_x = x1 + 12
-    start_y = y1 + 18 + _font_height(draw, font) + 14
-    max_width = (x2 - x1) - 24
-    line_height = _font_height(draw, font) + 4
-    available_h = max(0, (y2 - y1) - (start_y - y1) - 10)
-    max_lines = max(1, available_h // max(1, line_height))
-
     if not events:
         return
 
-    visible_count = min(len(events), max_lines)
-    if len(events) > max_lines and max_lines >= 2:
-        visible_count = max_lines - 1
+    start_x = x1 + 8
+    start_y = y1 + max(46, (y2 - y1) // 6)
+    max_width = (x2 - x1) - 16
+    available_h = max(0, y2 - start_y - 8)
+
+    classroom_h = _font_height(draw, classroom_font)
+    time_h = _font_height(draw, time_font)
+    card_h = max(52, classroom_h + time_h + 20)
+    card_gap = 6
+    slot_h = card_h + card_gap
+    max_cards = max(1, available_h // max(1, slot_h))
+
+    visible_count = min(len(events), max_cards)
+    if len(events) > max_cards and max_cards >= 2:
+        visible_count = max_cards - 1
 
     y = start_y
     for entry in events[:visible_count]:
-        label = _format_event_line(entry)
-        clipped = _truncate_text(draw, label, font, max_width)
-        draw.text((start_x, y), clipped, fill=text_color, font=font)
-        y += line_height
+        class_style = _get_classroom_card_style(entry.classroom)
+        venue_style = _get_venue_badge_style(entry.venue)
+        card_rect = (start_x, y, start_x + max_width, y + card_h)
+        draw.rounded_rectangle(
+            card_rect,
+            radius=10,
+            fill=class_style["fill"],
+            outline=class_style["border"],
+            width=2,
+        )
 
+        inner_x = card_rect[0] + 10
+        inner_right = card_rect[2] - 10
+        class_y = card_rect[1] + 8
+
+        if entry.venue:
+            venue_text = _truncate_text(draw, entry.venue, venue_font, max_width // 2)
+            badge_h = _font_height(draw, venue_font) + 8
+            badge_w = _text_width(draw, venue_text, venue_font) + 16
+            badge_w = min(badge_w, max_width // 2)
+            badge_rect = (card_rect[2] - badge_w - 8, card_rect[1] + 7, card_rect[2] - 8, card_rect[1] + 7 + badge_h)
+            draw.rounded_rectangle(
+                badge_rect,
+                radius=8,
+                fill=venue_style["fill"],
+                outline=venue_style["border"],
+                width=1,
+            )
+            draw.text((badge_rect[0] + 8, badge_rect[1] + 4), venue_text, fill=venue_style["text"], font=venue_font)
+            inner_right = badge_rect[0] - 8
+
+        classroom_text = entry.classroom or "教室未定"
+        classroom_text = _truncate_text(draw, classroom_text, classroom_font, max(10, inner_right - inner_x))
+        draw.text((inner_x, class_y), classroom_text, fill=class_style["text"], font=classroom_font)
+
+        time_text = _format_time_range(entry)
+        time_y = card_rect[3] - _font_height(draw, time_font) - 8
+        draw.text((inner_x, time_y), time_text, fill=class_style["text"], font=time_font)
+        y += slot_h
+
+    hidden_y = y - 2
     hidden_count = len(events) - visible_count
     if hidden_count > 0:
-        draw.text((start_x, y), f"+{hidden_count}件", fill=muted_color, font=font)
+        draw.text((start_x + 4, hidden_y), f"+{hidden_count}件", fill=muted_color, font=hidden_font)
 
 
 def _format_event_line(entry: ScheduleEntry) -> str:
@@ -535,6 +601,36 @@ def _format_event_line(entry: ScheduleEntry) -> str:
 
 def _short_classroom_name(value: str) -> str:
     return value.replace("教室", "").strip()
+
+
+def _format_time_range(entry: ScheduleEntry) -> str:
+    start_text = entry.start.strftime("%H:%M") if entry.start else ""
+    end_text = entry.end.strftime("%H:%M") if entry.end else ""
+    if start_text and end_text:
+        return f"{start_text} - {end_text}"
+    if start_text:
+        return f"{start_text} -"
+    if end_text:
+        return f"- {end_text}"
+    return "時間未定"
+
+
+def _get_classroom_card_style(classroom: str) -> dict[str, tuple[int, int, int]]:
+    value = (classroom or "").strip()
+    if "東京" in value:
+        return CLASSROOM_CARD_STYLES["tokyo"]
+    if "つくば" in value:
+        return CLASSROOM_CARD_STYLES["tsukuba"]
+    if "沼津" in value:
+        return CLASSROOM_CARD_STYLES["numazu"]
+    return CLASSROOM_CARD_STYLES["default"]
+
+
+def _get_venue_badge_style(venue: str) -> dict[str, tuple[int, int, int]]:
+    value = (venue or "").strip()
+    if value in VENUE_BADGE_STYLES:
+        return VENUE_BADGE_STYLES[value]
+    return VENUE_BADGE_STYLES["default"]
 
 
 def _resolve_fonts(font_path: str) -> dict[str, list[str]]:
@@ -655,7 +751,7 @@ def _build_entry_from_any_date(item: Any, tz: ZoneInfo) -> ScheduleEntry | None:
     day = None
     start_dt = None
     end_dt = None
-    date_keys = ["date", "day", "ymd", "start", "start_at", "starts_at", "startAt"]
+    date_keys = ["date", "day", "ymd", "date_ymd", "日付", "start", "start_at", "starts_at", "startAt"]
     for key in date_keys:
         raw = item.get(key)
         if raw is None:
@@ -710,7 +806,23 @@ def _build_entry_from_dict(
             title = "予定"
 
     if start_dt is None:
-        for key in ["start", "start_at", "starts_at", "startAt", "time", "start_time"]:
+        for key in [
+            "start",
+            "start_at",
+            "starts_at",
+            "startAt",
+            "time",
+            "start_time",
+            "first_start",
+            "firstStart",
+            "second_start",
+            "secondStart",
+            "beginner_start",
+            "beginnerStart",
+            "1部開始",
+            "2部開始",
+            "初回者開始",
+        ]:
             raw = item.get(key)
             if raw is None:
                 continue
@@ -722,7 +834,19 @@ def _build_entry_from_dict(
                 break
 
     if end_dt is None:
-        for key in ["end", "end_at", "ends_at", "endAt", "end_time"]:
+        for key in [
+            "end",
+            "end_at",
+            "ends_at",
+            "endAt",
+            "end_time",
+            "first_end",
+            "firstEnd",
+            "second_end",
+            "secondEnd",
+            "1部終了",
+            "2部終了",
+        ]:
             raw = item.get(key)
             if raw is None:
                 continue

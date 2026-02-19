@@ -82,3 +82,49 @@ def test_extract_month_entries_from_participants_index_shape():
     assert entries[0].classroom == "東京教室"
     assert entries[0].venue == "浅草橋"
     assert entries[0].title == "2名"
+
+
+def test_extract_month_entries_from_wrapped_worker_response():
+    payload = {
+        "ok": True,
+        "data": {
+            "generated_at": "2026-02-25T12:00:00+09:00",
+            "timezone": "Asia/Tokyo",
+            "dates": {
+                "2026-03-10": [
+                    {
+                        "lesson_id": "wrapped-1",
+                        "classroom": "つくば教室",
+                        "venue": "浅草橋",
+                        "start_at": "2026-03-10T13:00:00+09:00",
+                    }
+                ]
+            },
+        },
+    }
+    entries = extract_month_entries_from_json(payload, 2026, 3, timezone="Asia/Tokyo")
+    assert len(entries) == 1
+    assert entries[0].classroom == "つくば教室"
+    assert entries[0].start and entries[0].start.hour == 13
+
+
+def test_extract_month_entries_supports_sheet_time_keys():
+    payload = {
+        "dates": {
+            "2026-03-20": [
+                {
+                    "lesson_id": "sheet-1",
+                    "教室": "沼津教室",
+                    "会場": "東池袋",
+                    "1部開始": "09:30",
+                    "1部終了": "12:00",
+                }
+            ]
+        }
+    }
+    entries = extract_month_entries_from_json(payload, 2026, 3, timezone="Asia/Tokyo")
+    assert len(entries) == 1
+    assert entries[0].classroom == "沼津教室"
+    assert entries[0].venue == "東池袋"
+    assert entries[0].start and entries[0].start.hour == 9 and entries[0].start.minute == 30
+    assert entries[0].end and entries[0].end.hour == 12
