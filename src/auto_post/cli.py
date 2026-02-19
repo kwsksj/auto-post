@@ -1,6 +1,7 @@
 """Command-line interface."""
 
 import logging
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -305,6 +306,161 @@ def export_gallery_json(
         click.echo(f"Light existing:   {stats.light_skipped_existing}")
         click.echo(f"Light failed:     {stats.light_failed}")
     click.echo("=" * 30)
+
+
+@main.command("post-monthly-schedule")
+@click.option("--year", type=int, help="Target year (e.g. 2026)")
+@click.option("--month", type=click.IntRange(1, 12), help="Target month (1-12)")
+@click.option(
+    "--target",
+    type=click.Choice(["current", "next"]),
+    default=None,
+    help="When year/month are omitted, post current or next month",
+)
+@click.option(
+    "--platform",
+    type=click.Choice(["instagram", "x", "threads", "all"]),
+    default="all",
+    help="Platform to post to (default: all)",
+)
+@click.option("--dry-run", is_flag=True, help="Generate image and caption without posting")
+@click.option(
+    "--output",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Optional output path to save generated image (.jpg/.png)",
+)
+@click.pass_context
+def post_monthly_schedule(
+    ctx,
+    year: int | None,
+    month: int | None,
+    target: str | None,
+    platform: str,
+    dry_run: bool,
+    output: Path | None,
+):
+    """Generate monthly schedule image from JSON/R2 and post to SNS."""
+    config = Config.load(ctx.obj.get("env_file"))
+    from .monthly_schedule import (
+        JST,
+        MonthlyScheduleNotionClient,
+        ScheduleJsonSourceConfig,
+        ScheduleRenderConfig,
+        ScheduleSourceConfig,
+        build_monthly_caption,
+        default_schedule_filename,
+        extract_month_entries_from_json,
+        image_to_bytes,
+        render_monthly_schedule_image,
+        resolve_target_year_month,
+        save_image,
+    )
+    from .r2_storage import R2Storage
+
+    env_target = os.environ.get("MONTHLY_SCHEDULE_TARGET", "next").strip().lower()
+    if env_target not in {"current", "next"}:
+        env_target = "next"
+    resolved_target = target or env_target
+
+    try:
+        target_year, target_month = resolve_target_year_month(
+            now=datetime.now(tz=JST),
+            target=resolved_target,
+            year=year,
+            month=month,
+        )
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
+
+    source = os.environ.get("MONTHLY_SCHEDULE_SOURCE", "").strip().lower() or "r2-json"
+    render_config = ScheduleRenderConfig.from_env()
+    entries = []
+
+    if source in {"r2-json", "json", "r2"}:
+        json_source = ScheduleJsonSourceConfig.from_env()
+        data = None
+
+        if json_source.url:
+            import requests
+
+            try:
+                res = requests.get(json_source.url, timeout=30)
+                res.raise_for_status()
+                data = res.json()
+            except Exception as e:
+                raise click.ClickException(f"Failed to fetch MONTHLY_SCHEDULE_JSON_URL: {e}") from e
+        else:
+            r2 = R2Storage(config.r2)
+            data = r2.get_json(json_source.key)
+            if data is None:
+                raise click.ClickException(f"R2 JSON not found: key={json_source.key}")
+
+        if not isinstance(data, dict):
+            raise click.ClickException("Schedule JSON must be an object")
+        entries = extract_month_entries_from_json(data, target_year, target_month, timezone=json_source.timezone)
+    elif source == "notion":
+        try:
+            source_config = ScheduleSourceConfig.from_env()
+        except ValueError as e:
+            raise click.ClickException(str(e)) from e
+        schedule_client = MonthlyScheduleNotionClient(config.notion.token, source_config)
+        entries = schedule_client.fetch_month_entries(target_year, target_month)
+    else:
+        raise click.ClickException("MONTHLY_SCHEDULE_SOURCE must be one of: r2-json, json, r2, notion")
+    image = render_monthly_schedule_image(target_year, target_month, entries, render_config)
+
+    mime_type = "image/jpeg"
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        mime_type = save_image(image, output)
+    filename = output.name if output else default_schedule_filename(target_year, target_month, mime_type)
+    image_bytes = image_to_bytes(image, mime_type)
+
+    caption_template = os.environ.get("MONTHLY_SCHEDULE_CAPTION_TEMPLATE", "").strip()
+    caption = build_monthly_caption(
+        target_year,
+        target_month,
+        entries,
+        default_tags=config.default_tags,
+        template=caption_template,
+    )
+
+    if platform == "all":
+        platforms = ["instagram", "threads", "x"]
+    else:
+        platforms = [platform]
+
+    poster = Poster(config)
+    result = poster.post_custom_images(
+        images_data=[(image_bytes, filename, mime_type)],
+        caption=caption,
+        dry_run=dry_run,
+        platforms=platforms,
+    )
+
+    click.echo("\n" + "=" * 34)
+    click.echo("Monthly Schedule Post Summary")
+    click.echo("=" * 34)
+    click.echo(f"Target month: {target_year}-{target_month:02d}")
+    click.echo(f"Source: {source}")
+    click.echo(f"Entries: {len(entries)}")
+    click.echo(f"Image size: {render_config.width}x{render_config.height} (3:4 expected)")
+    if output:
+        click.echo(f"Saved image: {output}")
+    click.echo(f"Instagram: {'OK' if result['instagram'] else '-'}")
+    click.echo(f"Threads:   {'OK' if result['threads'] else '-'}")
+    click.echo(f"X:         {'OK' if result['x'] else '-'}")
+    if result.get("post_ids"):
+        post_ids = result["post_ids"]
+        click.echo(f"Post IDs:  {post_ids}")
+    if result["errors"]:
+        click.echo("-" * 34)
+        click.echo("Errors:")
+        for err in result["errors"]:
+            click.echo(f"  - {err}")
+        click.echo("=" * 34)
+        sys.exit(1)
+    click.echo("=" * 34)
 
 
 @main.command()

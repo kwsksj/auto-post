@@ -230,6 +230,9 @@ auto-post list-works
 
 # 投稿 dry-run
 make publish-dry
+
+# 月次日程画像のdry-run
+make publish-monthly-schedule-dry
 ```
 
 ---
@@ -285,8 +288,11 @@ GitHub リポジトリ → Settings → Secrets and variables → Actions
 | `R2_PUBLIC_URL`                 | パブリックURL                   |
 | `NOTION_TOKEN`                  | Notion Integration Token        |
 | `NOTION_DATABASE_ID`            | データベースID                  |
+| `MONTHLY_SCHEDULE_JSON_KEY`（Variable推奨） | 月次日程JSONのR2キー（例: `participants_index.json`） |
+| `MONTHLY_SCHEDULE_SOURCE`（Variable推奨） | `r2-json`（既定）/ `json` / `notion` |
 
 ※ Threads App ID/Secret は Instagram と同じ Meta アプリを使用する場合、`INSTAGRAM_APP_ID`/`INSTAGRAM_APP_SECRET` と同じ値になります。
+※ 月次日程投稿は既定で R2 JSON を参照します。URL配信で運用する場合は `MONTHLY_SCHEDULE_JSON_URL`（Variable）を設定し、Notion直読みへ切り替える場合のみ `MONTHLY_SCHEDULE_SOURCE=notion` と `MONTHLY_SCHEDULE_NOTION_DATABASE_ID` を設定してください。
 
 ローカル `.env` のキー有無チェックは以下で実施できます:
 
@@ -299,6 +305,7 @@ make secrets-list ENV_FILE=./.env
 - `Daily Auto Post`（`.github/workflows/schedule.yml`）: 毎日 16:42 JST (07:42 UTC)
 - `Daily Gallery Export`（`.github/workflows/gallery-export.yml`）: 毎日 16:10 JST (07:10 UTC)
 - `Catch-up Post`（`.github/workflows/catchup.yml`）: 手動実行のみ
+- `Monthly Schedule Post`（`.github/workflows/monthly-schedule.yml`）: 毎月25日 16:00 JST (07:00 UTC)
 - 手動実行: GitHub Actions の各ワークフローから `Run workflow`
 
 ---
