@@ -1,4 +1,4 @@
-name = "gallery-star"
+name = "media-platform-api"
 main = "worker/src/index.js"
 compatibility_date = "2026-01-30"
 account_id = "3b0e3054c77ce716f407376182c2813c"
