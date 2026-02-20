@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -72,6 +73,90 @@ def _build_monthly_output_path(base_output: Path, index: int, year: int, month: 
         return base_output
     suffix = base_output.suffix or ".jpg"
     return base_output.with_name(f"{base_output.stem}-{year}-{month:02d}{suffix}")
+
+
+def _build_monthly_schedule_loader(source: str, config: Config) -> Callable[[int, int], list[Any]]:
+    from .monthly_schedule import (
+        MonthlyScheduleNotionClient,
+        ScheduleJsonSourceConfig,
+        ScheduleSourceConfig,
+        extract_month_entries_from_json,
+    )
+    from .r2_storage import R2Storage
+
+    if source in {"r2-json", "json", "r2"}:
+        json_source = ScheduleJsonSourceConfig.from_env()
+        if json_source.url:
+            import requests
+
+            try:
+                res = requests.get(json_source.url, timeout=30)
+                res.raise_for_status()
+                data = res.json()
+            except Exception as e:
+                raise click.ClickException(f"Failed to fetch MONTHLY_SCHEDULE_JSON_URL: {e}") from e
+        else:
+            r2 = R2Storage(config.r2)
+            data = r2.get_json(json_source.key)
+            if data is None:
+                raise click.ClickException(f"R2 JSON not found: key={json_source.key}")
+
+        if not isinstance(data, dict):
+            raise click.ClickException("Schedule JSON must be an object")
+
+        def load_month_entries(y: int, m: int) -> list[Any]:
+            return extract_month_entries_from_json(
+                data,
+                y,
+                m,
+                timezone=json_source.timezone,
+                include_adjacent=True,
+            )
+
+        return load_month_entries
+
+    if source == "notion":
+        try:
+            source_config = ScheduleSourceConfig.from_env()
+        except ValueError as e:
+            raise click.ClickException(str(e)) from e
+        schedule_client = MonthlyScheduleNotionClient(config.notion.token, source_config)
+
+        def load_month_entries(y: int, m: int) -> list[Any]:
+            return schedule_client.fetch_month_entries(y, m, include_adjacent=True)
+
+        return load_month_entries
+
+    raise click.ClickException("MONTHLY_SCHEDULE_SOURCE must be one of: r2-json, json, r2, notion")
+
+
+def _prepare_monthly_schedule_images(
+    month_items: list[MonthlyScheduleItem],
+    output: Path | None,
+    *,
+    default_schedule_filename: Callable[[int, int, str], str],
+    image_to_bytes: Callable[[Any, str], bytes],
+    save_image: Callable[[Any, Path], str],
+) -> tuple[list[tuple[bytes, str, str]], list[Path]]:
+    images_data: list[tuple[bytes, str, str]] = []
+    saved_outputs: list[Path] = []
+
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+
+    for index, item in enumerate(month_items):
+        post_mime_type = "image/jpeg"
+        post_filename = default_schedule_filename(item.year, item.month, post_mime_type)
+
+        if output:
+            output_path = _build_monthly_output_path(output, index, item.year, item.month)
+            save_image(item.image, output_path)
+            saved_outputs.append(output_path)
+
+        image_bytes = image_to_bytes(item.image, post_mime_type)
+        images_data.append((image_bytes, post_filename, post_mime_type))
+
+    return images_data, saved_outputs
 
 
 def _merge_post_result(target: dict, partial: dict) -> None:
@@ -445,19 +530,14 @@ def post_monthly_schedule(
     config = Config.load(ctx.obj.get("env_file"))
     from .monthly_schedule import (
         JST,
-        MonthlyScheduleNotionClient,
-        ScheduleJsonSourceConfig,
         ScheduleRenderConfig,
-        ScheduleSourceConfig,
         build_monthly_caption,
         default_schedule_filename,
-        extract_month_entries_from_json,
         image_to_bytes,
         render_monthly_schedule_image,
         resolve_target_year_month,
         save_image,
     )
-    from .r2_storage import R2Storage
 
     env_target = os.environ.get("MONTHLY_SCHEDULE_TARGET", "next").strip().lower()
     if env_target not in {"current", "next"}:
@@ -490,48 +570,7 @@ def post_monthly_schedule(
     render_config = ScheduleRenderConfig.from_env()
     target_months = [_shift_year_month(target_year, target_month, offset) for offset in range(3)]
     month_items: list[MonthlyScheduleItem] = []
-
-    if source in {"r2-json", "json", "r2"}:
-        json_source = ScheduleJsonSourceConfig.from_env()
-        if json_source.url:
-            import requests
-
-            try:
-                res = requests.get(json_source.url, timeout=30)
-                res.raise_for_status()
-                data = res.json()
-            except Exception as e:
-                raise click.ClickException(f"Failed to fetch MONTHLY_SCHEDULE_JSON_URL: {e}") from e
-        else:
-            r2 = R2Storage(config.r2)
-            data = r2.get_json(json_source.key)
-            if data is None:
-                raise click.ClickException(f"R2 JSON not found: key={json_source.key}")
-
-        if not isinstance(data, dict):
-            raise click.ClickException("Schedule JSON must be an object")
-
-        def load_month_entries(y: int, m: int):
-            return extract_month_entries_from_json(
-                data,
-                y,
-                m,
-                timezone=json_source.timezone,
-                include_adjacent=True,
-            )
-
-    elif source == "notion":
-        try:
-            source_config = ScheduleSourceConfig.from_env()
-        except ValueError as e:
-            raise click.ClickException(str(e)) from e
-        schedule_client = MonthlyScheduleNotionClient(config.notion.token, source_config)
-
-        def load_month_entries(y: int, m: int):
-            return schedule_client.fetch_month_entries(y, m, include_adjacent=True)
-
-    else:
-        raise click.ClickException("MONTHLY_SCHEDULE_SOURCE must be one of: r2-json, json, r2, notion")
+    load_month_entries = _build_monthly_schedule_loader(source, config)
 
     for y, m in target_months:
         render_entries = load_month_entries(y, m)
@@ -556,23 +595,13 @@ def post_monthly_schedule(
             f"No schedule entries found from {target_year}-{target_month:02d} to {end_year}-{end_month:02d}"
         )
 
-    saved_outputs: list[Path] = []
-    images_data: list[tuple[bytes, str, str]] = []
-    if output:
-        output.parent.mkdir(parents=True, exist_ok=True)
-
-    for index, item in enumerate(month_items):
-        mime_type = "image/jpeg"
-        filename = default_schedule_filename(item.year, item.month, mime_type)
-
-        if output:
-            output_path = _build_monthly_output_path(output, index, item.year, item.month)
-            mime_type = save_image(item.image, output_path)
-            filename = output_path.name
-            saved_outputs.append(output_path)
-
-        image_bytes = image_to_bytes(item.image, mime_type)
-        images_data.append((image_bytes, filename, mime_type))
+    images_data, saved_outputs = _prepare_monthly_schedule_images(
+        month_items,
+        output,
+        default_schedule_filename=default_schedule_filename,
+        image_to_bytes=image_to_bytes,
+        save_image=save_image,
+    )
 
     caption_template = os.environ.get("MONTHLY_SCHEDULE_CAPTION_TEMPLATE", "").strip()
     first_item = month_items[0]

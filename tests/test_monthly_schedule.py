@@ -183,6 +183,27 @@ def test_extract_month_entries_from_json_include_adjacent_weeks():
     assert [e.day for e in with_adjacent] == [date(2026, 2, 28), date(2026, 3, 20), date(2026, 4, 2)]
 
 
+def test_extract_month_entries_ignores_invalid_dates_items_and_falls_back_to_entries():
+    payload = {
+        "dates": {
+            "2026-03-05": [None, "invalid"],
+        },
+        "entries": [
+            {
+                "date": "2026-03-06",
+                "classroom": "東京教室",
+                "venue": "浅草橋",
+                "start_at": "2026-03-06T10:30:00+09:00",
+            }
+        ],
+    }
+    entries = extract_month_entries_from_json(payload, 2026, 3, timezone="Asia/Tokyo")
+    assert len(entries) == 1
+    assert entries[0].day == date(2026, 3, 6)
+    assert entries[0].classroom == "東京教室"
+    assert entries[0].venue == "浅草橋"
+
+
 def test_build_day_cards_merges_same_classroom_slots():
     entries = [
         ScheduleEntry(

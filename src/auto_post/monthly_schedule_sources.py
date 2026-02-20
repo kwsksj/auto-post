@@ -248,10 +248,7 @@ def _build_entry_from_dict(
     end_dt: datetime | None = None,
 ) -> ScheduleEntry | None:
     if not isinstance(item, dict):
-        title = "レッスン"
-        classroom = ""
-        venue = ""
-        return ScheduleEntry(day=day, title=title, classroom=classroom, venue=venue, slot="")
+        return None
 
     classroom = _pick_text(item, ["classroom", "classroom_name", "studio", "教室"])
     venue = _pick_text(item, ["venue", "venue_name", "会場", "location"])
