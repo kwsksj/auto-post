@@ -4,8 +4,10 @@ import logging
 import os
 import re
 import sys
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -24,6 +26,14 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class MonthlyScheduleItem:
+    year: int
+    month: int
+    caption_entries: list[Any]
+    image: Any
 
 
 def _parse_skip_target_months(raw: str) -> set[tuple[int, int]]:
@@ -50,6 +60,71 @@ def _parse_skip_target_months(raw: str) -> set[tuple[int, int]]:
             )
         months.add((year, month))
     return months
+
+
+def _shift_year_month(base_year: int, base_month: int, add: int) -> tuple[int, int]:
+    total = base_year * 12 + (base_month - 1) + add
+    return total // 12, (total % 12) + 1
+
+
+def _build_monthly_output_path(base_output: Path, index: int, year: int, month: int) -> Path:
+    if index == 0:
+        return base_output
+    suffix = base_output.suffix or ".jpg"
+    return base_output.with_name(f"{base_output.stem}-{year}-{month:02d}{suffix}")
+
+
+def _merge_post_result(target: dict, partial: dict) -> None:
+    for key in ("instagram", "threads", "x"):
+        target[key] = bool(target[key] or partial.get(key))
+    target["post_ids"].update(partial.get("post_ids", {}))
+    target["errors"].extend(partial.get("errors", []))
+
+
+def _echo_monthly_schedule_summary(
+    *,
+    target_year: int,
+    target_month: int,
+    source: str,
+    month_items: list[MonthlyScheduleItem],
+    render_width: int,
+    render_height: int,
+    saved_outputs: list[Path],
+    result: dict,
+) -> None:
+    click.echo("\n" + "=" * 34)
+    click.echo("Monthly Schedule Post Summary")
+    click.echo("=" * 34)
+    click.echo(f"Target month: {target_year}-{target_month:02d}")
+    click.echo(
+        "Posted months: "
+        + ", ".join([f"{item.year}-{item.month:02d}" for item in month_items])
+    )
+    click.echo(f"Source: {source}")
+    for item in month_items:
+        click.echo(f"Entries {item.year}-{item.month:02d}: {len(item.caption_entries)}")
+    click.echo(f"Image size: {render_width}x{render_height} (3:4 expected)")
+    if saved_outputs:
+        if len(saved_outputs) == 1:
+            click.echo(f"Saved image: {saved_outputs[0]}")
+        else:
+            click.echo("Saved images:")
+            for path in saved_outputs:
+                click.echo(f"  - {path}")
+    click.echo(f"Instagram: {'OK' if result['instagram'] else '-'}")
+    click.echo(f"Threads:   {'OK' if result['threads'] else '-'}")
+    click.echo(f"X:         {'OK' if result['x'] else '-'}")
+    if result.get("post_ids"):
+        post_ids = result["post_ids"]
+        click.echo(f"Post IDs:  {post_ids}")
+    if result["errors"]:
+        click.echo("-" * 34)
+        click.echo("Errors:")
+        for err in result["errors"]:
+            click.echo(f"  - {err}")
+        click.echo("=" * 34)
+        sys.exit(1)
+    click.echo("=" * 34)
 
 
 @click.group()
@@ -384,10 +459,6 @@ def post_monthly_schedule(
     )
     from .r2_storage import R2Storage
 
-    def _shift_year_month(base_year: int, base_month: int, add: int) -> tuple[int, int]:
-        total = base_year * 12 + (base_month - 1) + add
-        return total // 12, (total % 12) + 1
-
     env_target = os.environ.get("MONTHLY_SCHEDULE_TARGET", "next").strip().lower()
     if env_target not in {"current", "next"}:
         env_target = "next"
@@ -418,14 +489,10 @@ def post_monthly_schedule(
     source = os.environ.get("MONTHLY_SCHEDULE_SOURCE", "").strip().lower() or "r2-json"
     render_config = ScheduleRenderConfig.from_env()
     target_months = [_shift_year_month(target_year, target_month, offset) for offset in range(3)]
-    month_items: list[dict] = []
+    month_items: list[MonthlyScheduleItem] = []
 
-    json_source = None
-    data = None
-    schedule_client = None
     if source in {"r2-json", "json", "r2"}:
         json_source = ScheduleJsonSourceConfig.from_env()
-
         if json_source.url:
             import requests
 
@@ -443,30 +510,31 @@ def post_monthly_schedule(
 
         if not isinstance(data, dict):
             raise click.ClickException("Schedule JSON must be an object")
-    elif source == "notion":
-        try:
-            source_config = ScheduleSourceConfig.from_env()
-        except ValueError as e:
-            raise click.ClickException(str(e)) from e
-        schedule_client = MonthlyScheduleNotionClient(config.notion.token, source_config)
-    else:
-        raise click.ClickException("MONTHLY_SCHEDULE_SOURCE must be one of: r2-json, json, r2, notion")
 
-    for year_month in target_months:
-        y, m = year_month
-        if source in {"r2-json", "json", "r2"}:
-            assert isinstance(data, dict)
-            assert json_source is not None
-            render_entries = extract_month_entries_from_json(
+        def load_month_entries(y: int, m: int):
+            return extract_month_entries_from_json(
                 data,
                 y,
                 m,
                 timezone=json_source.timezone,
                 include_adjacent=True,
             )
-        else:
-            assert schedule_client is not None
-            render_entries = schedule_client.fetch_month_entries(y, m, include_adjacent=True)
+
+    elif source == "notion":
+        try:
+            source_config = ScheduleSourceConfig.from_env()
+        except ValueError as e:
+            raise click.ClickException(str(e)) from e
+        schedule_client = MonthlyScheduleNotionClient(config.notion.token, source_config)
+
+        def load_month_entries(y: int, m: int):
+            return schedule_client.fetch_month_entries(y, m, include_adjacent=True)
+
+    else:
+        raise click.ClickException("MONTHLY_SCHEDULE_SOURCE must be one of: r2-json, json, r2, notion")
+
+    for y, m in target_months:
+        render_entries = load_month_entries(y, m)
 
         caption_entries = [e for e in render_entries if e.day.year == y and e.day.month == m]
         if not caption_entries:
@@ -474,12 +542,12 @@ def post_monthly_schedule(
 
         image = render_monthly_schedule_image(y, m, render_entries, render_config)
         month_items.append(
-            {
-                "year": y,
-                "month": m,
-                "caption_entries": caption_entries,
-                "image": image,
-            }
+            MonthlyScheduleItem(
+                year=y,
+                month=m,
+                caption_entries=caption_entries,
+                image=image,
+            )
         )
 
     if not month_items:
@@ -490,38 +558,33 @@ def post_monthly_schedule(
 
     saved_outputs: list[Path] = []
     images_data: list[tuple[bytes, str, str]] = []
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+
     for index, item in enumerate(month_items):
-        image = item["image"]
-        year = item["year"]
-        month = item["month"]
         mime_type = "image/jpeg"
-        filename = default_schedule_filename(year, month, mime_type)
+        filename = default_schedule_filename(item.year, item.month, mime_type)
 
         if output:
-            output.parent.mkdir(parents=True, exist_ok=True)
-            if index == 0:
-                output_path = output
-            else:
-                suffix = output.suffix or ".jpg"
-                output_path = output.with_name(f"{output.stem}-{year}-{month:02d}{suffix}")
-            mime_type = save_image(image, output_path)
+            output_path = _build_monthly_output_path(output, index, item.year, item.month)
+            mime_type = save_image(item.image, output_path)
             filename = output_path.name
             saved_outputs.append(output_path)
 
-        image_bytes = image_to_bytes(image, mime_type)
+        image_bytes = image_to_bytes(item.image, mime_type)
         images_data.append((image_bytes, filename, mime_type))
 
     caption_template = os.environ.get("MONTHLY_SCHEDULE_CAPTION_TEMPLATE", "").strip()
     first_item = month_items[0]
-    first_year = first_item["year"]
-    first_month = first_item["month"]
-    first_entries = first_item["caption_entries"]
-    merged_entries = [entry for item in month_items for entry in item["caption_entries"]]
+    first_year = first_item.year
+    first_month = first_item.month
+    first_entries = first_item.caption_entries
+    merged_entries = [entry for item in month_items for entry in item.caption_entries]
 
     if len(month_items) > 1:
         last_item = month_items[-1]
-        last_year = last_item["year"]
-        last_month = last_item["month"]
+        last_year = last_item.year
+        last_month = last_item.month
         if first_year == last_year:
             range_label = f"{first_year}年{first_month}月〜{last_month}月"
         else:
@@ -570,10 +633,7 @@ def post_monthly_schedule(
             dry_run=dry_run,
             platforms=ig_threads_platforms,
         )
-        for key in ("instagram", "threads", "x"):
-            result[key] = result[key] or ig_threads_result[key]
-        result["post_ids"].update(ig_threads_result.get("post_ids", {}))
-        result["errors"].extend(ig_threads_result.get("errors", []))
+        _merge_post_result(result, ig_threads_result)
 
     if "x" in platforms:
         x_result = poster.post_custom_images(
@@ -582,43 +642,18 @@ def post_monthly_schedule(
             dry_run=dry_run,
             platforms=["x"],
         )
-        result["x"] = result["x"] or x_result["x"]
-        result["post_ids"].update(x_result.get("post_ids", {}))
-        result["errors"].extend(x_result.get("errors", []))
+        _merge_post_result(result, x_result)
 
-    click.echo("\n" + "=" * 34)
-    click.echo("Monthly Schedule Post Summary")
-    click.echo("=" * 34)
-    click.echo(f"Target month: {target_year}-{target_month:02d}")
-    click.echo(
-        "Posted months: "
-        + ", ".join([f"{item['year']}-{item['month']:02d}" for item in month_items])
+    _echo_monthly_schedule_summary(
+        target_year=target_year,
+        target_month=target_month,
+        source=source,
+        month_items=month_items,
+        render_width=render_config.width,
+        render_height=render_config.height,
+        saved_outputs=saved_outputs,
+        result=result,
     )
-    click.echo(f"Source: {source}")
-    for item in month_items:
-        click.echo(f"Entries {item['year']}-{item['month']:02d}: {len(item['caption_entries'])}")
-    click.echo(f"Image size: {render_config.width}x{render_config.height} (3:4 expected)")
-    if saved_outputs:
-        if len(saved_outputs) == 1:
-            click.echo(f"Saved image: {saved_outputs[0]}")
-        else:
-            click.echo("Saved images:")
-            for path in saved_outputs:
-                click.echo(f"  - {path}")
-    click.echo(f"Instagram: {'OK' if result['instagram'] else '-'}")
-    click.echo(f"Threads:   {'OK' if result['threads'] else '-'}")
-    click.echo(f"X:         {'OK' if result['x'] else '-'}")
-    if result.get("post_ids"):
-        post_ids = result["post_ids"]
-        click.echo(f"Post IDs:  {post_ids}")
-    if result["errors"]:
-        click.echo("-" * 34)
-        click.echo("Errors:")
-        for err in result["errors"]:
-            click.echo(f"  - {err}")
-        click.echo("=" * 34)
-        sys.exit(1)
-    click.echo("=" * 34)
 
 
 @main.command()
