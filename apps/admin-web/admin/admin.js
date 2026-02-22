@@ -2643,6 +2643,7 @@ function validateUploadDraft(draft) {
 	if (!trimText(draft.completedDate)) return "完成日を入力してください";
 	const classroom = normalizeClassroom(draft.classroom);
 	if (!classroom) return "教室を選択してください";
+	if (!Array.isArray(draft.authorIds) || draft.authorIds.length === 0) return "作者を選択してください";
 	const invalidAuthorIds = (draft.authorIds || []).filter((id) => !isNotionIdLike(id));
 	if (invalidAuthorIds.length > 0) {
 		return "作者IDがNotion page idではありません。students_index.jsonに notion_id を含めるか、Notion検索で選択してください。";
