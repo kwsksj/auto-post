@@ -1697,6 +1697,47 @@ async function notifyStudentsOnUploadBatch(env, itemsRaw) {
   };
 }
 
+async function handleQueueWorkNotification(request, env) {
+  if (!env.STAR_KV) return serverError("KV binding not configured (STAR_KV)");
+
+  const payload = await readJson(request);
+  if (!payload || typeof payload !== "object") return badRequest("invalid json");
+
+  const workId = asString(payload.workId).trim();
+  if (!workId) return badRequest("missing workId");
+
+  // If authorIds are not supplied in the request, fetch them from Notion.
+  let resolvedPayload = { ...payload };
+  if (!Array.isArray(payload.authorIds) || payload.authorIds.length === 0) {
+    const pageRes = await notionFetch(env, `/pages/${workId}`, { method: "GET" });
+    if (!pageRes.ok) {
+      return jsonResponse(
+        { ok: false, error: "failed to fetch work from Notion", detail: pageRes.data },
+        pageRes.status ?? 500,
+      );
+    }
+    const simplified = simplifyWorkFromNotionPage(env, pageRes.data);
+    resolvedPayload = {
+      title: asString(payload.title || simplified.title),
+      completedDate: asString(payload.completedDate || simplified.completedDate),
+      classroom: asString(payload.classroom || simplified.classroom),
+      imageCount:
+        payload.imageCount != null
+          ? payload.imageCount
+          : Array.isArray(simplified.images)
+            ? simplified.images.length
+            : 0,
+      authorIds: simplified.authorIds,
+    };
+  }
+
+  const queued = await queuePendingWorkNotification(env, workId, resolvedPayload);
+  if (!queued.queued) {
+    return jsonResponse({ ok: false, error: queued.reason }, 400);
+  }
+  return okResponse({ workId, key: queued.key });
+}
+
 async function handleNotifyStudentsAfterGalleryUpdate(env) {
   if (!env.STAR_KV) return serverError("KV binding not configured (STAR_KV)");
 
@@ -2935,6 +2976,10 @@ export default {
 
     if (pathname === "/admin/notify/students-after-gallery-update" && request.method === "POST") {
       return handleNotifyStudentsAfterGalleryUpdate(env);
+    }
+
+    if (pathname === "/admin/notify/queue-work" && request.method === "POST") {
+      return handleQueueWorkNotification(request, env);
     }
 
     if (pathname === "/admin/notion/tag" && request.method === "POST") {
